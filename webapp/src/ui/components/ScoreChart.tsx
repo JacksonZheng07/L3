@@ -14,8 +14,7 @@ const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
   grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
 
 export default function ScoreChart() {
-  const { state } = useStore();
-  const { scores } = state;
+  const { effectiveScores: scores } = useStore();
 
   const data = scores.map((s) => ({
     name: s.name.length > 14 ? s.name.slice(0, 12) + '..' : s.name,

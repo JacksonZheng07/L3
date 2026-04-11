@@ -14,8 +14,7 @@ const gaussian = (x: number, mu: number, sigma: number) =>
   Math.exp(-0.5 * ((x - mu) / sigma) ** 2);
 
 export default function ThreeCurvesChart() {
-  const { state } = useStore();
-  const { scores } = state;
+  const { effectiveScores: scores } = useStore();
 
   const curveData = useMemo(() => {
     if (scores.length === 0) return [];

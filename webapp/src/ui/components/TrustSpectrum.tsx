@@ -5,8 +5,8 @@ const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
   grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
 
 export default function TrustSpectrum() {
-  const { state } = useStore();
-  const { scores, totalBalance } = state;
+  const { state, effectiveScores: scores } = useStore();
+  const { totalBalance } = state;
 
   return (
     <div className="w-full rounded-lg border border-[#30363d] bg-[#161b22] p-6">

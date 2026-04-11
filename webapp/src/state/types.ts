@@ -57,6 +57,31 @@ export interface WalletBalance {
   balance: number; // sats
 }
 
+// ── Automation Mode ────────────────────────────────────────────
+export type AutomationMode = 'auto' | 'alert' | 'manual';
+
+// ── Trust Alerts ───────────────────────────────────────────────
+export interface TrustAlert {
+  id: string;
+  timestamp: string;
+  mintUrl: string;
+  mintName: string;
+  type: 'score_drop' | 'critical' | 'migration_suggested' | 'migration_executed' | 'recovery';
+  message: string;
+  score: number;
+  previousScore?: number;
+  dismissed: boolean;
+  actionTaken?: 'migrated' | 'ignored' | 'pending';
+}
+
+// ── Simulation ─────────────────────────────────────────────────
+export interface SimulationScenario {
+  id: string;
+  name: string;
+  description: string;
+  mintOverrides: Record<string, Partial<MintScore>>;
+}
+
 export type AppView = 'dashboard' | 'mints' | 'send' | 'receive';
 
 export interface AppState {
@@ -69,4 +94,9 @@ export interface AppState {
   lastScoredAt: string | null;
   currentView: AppView;
   selectedMint: string | null;
+  // New fields
+  automationMode: AutomationMode;
+  alerts: TrustAlert[];
+  simulationActive: boolean;
+  simulationScores: MintScore[] | null; // overrides scores when sim is active
 }

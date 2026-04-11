@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AppView, MintScore, MigrationEvent, WalletBalance, ProbeResult } from './types';
+import type { AppState, AppView, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert } from './types';
 import { MINTS, SCORING_INTERVAL_MS } from '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
@@ -16,6 +16,10 @@ const initialState: AppState = {
   lastScoredAt: null,
   currentView: 'dashboard',
   selectedMint: null,
+  automationMode: 'alert',
+  alerts: [],
+  simulationActive: false,
+  simulationScores: null,
 };
 
 type Action =
@@ -26,7 +30,14 @@ type Action =
   | { type: 'UPDATE_MIGRATION'; id: string; status: MigrationEvent['status'] }
   | { type: 'SET_BALANCES'; balances: WalletBalance[]; total: number }
   | { type: 'SET_VIEW'; view: AppView }
-  | { type: 'SET_SELECTED_MINT'; url: string | null };
+  | { type: 'SET_SELECTED_MINT'; url: string | null }
+  | { type: 'SET_AUTOMATION_MODE'; mode: AutomationMode }
+  | { type: 'ADD_ALERT'; alert: TrustAlert }
+  | { type: 'DISMISS_ALERT'; id: string }
+  | { type: 'SET_ALERT_ACTION'; id: string; action: TrustAlert['actionTaken'] }
+  | { type: 'CLEAR_ALERTS' }
+  | { type: 'SET_SIMULATION_ACTIVE'; active: boolean }
+  | { type: 'SET_SIMULATION_SCORES'; scores: MintScore[] | null };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -54,6 +65,20 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, currentView: action.view };
     case 'SET_SELECTED_MINT':
       return { ...state, selectedMint: action.url };
+    case 'SET_AUTOMATION_MODE':
+      return { ...state, automationMode: action.mode };
+    case 'ADD_ALERT':
+      return { ...state, alerts: [action.alert, ...state.alerts].slice(0, 100) };
+    case 'DISMISS_ALERT':
+      return { ...state, alerts: state.alerts.map(a => a.id === action.id ? { ...a, dismissed: true } : a) };
+    case 'SET_ALERT_ACTION':
+      return { ...state, alerts: state.alerts.map(a => a.id === action.id ? { ...a, actionTaken: action.action } : a) };
+    case 'CLEAR_ALERTS':
+      return { ...state, alerts: [] };
+    case 'SET_SIMULATION_ACTIVE':
+      return { ...state, simulationActive: action.active, simulationScores: action.active ? state.simulationScores : null };
+    case 'SET_SIMULATION_SCORES':
+      return { ...state, simulationScores: action.scores };
     default:
       return state;
   }
@@ -65,6 +90,8 @@ interface StoreContextType {
   runScoring: () => Promise<void>;
   refreshBalances: () => void;
   setView: (view: AppView) => void;
+  /** Returns the effective scores (simulation overrides real when active) */
+  effectiveScores: MintScore[];
 }
 
 const StoreContext = createContext<StoreContextType | null>(null);
@@ -73,6 +100,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const cachedKeysets = useRef<Map<string, string[]>>(new Map());
   const scoringRef = useRef(false);
+  const prevScoresRef = useRef<Map<string, number>>(new Map());
 
   const refreshBalances = useCallback(() => {
     const balances = walletEngine.getAllBalances();
@@ -85,7 +113,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     scoringRef.current = true;
     dispatch({ type: 'SET_SCORING', isScoring: true });
 
-    // Probe all mints in parallel
     const probeResults = new Map<string, ProbeResult>();
     const probePromises = MINTS.map(async (mint) => {
       const [info, keysets] = await Promise.all([
@@ -99,7 +126,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     await Promise.allSettled(probePromises);
 
-    // Score all mints
     const scores = await scoreAllMints(MINTS, probeResults, cachedKeysets.current);
 
     // Update keyset cache
@@ -110,6 +136,62 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // Generate alerts by comparing with previous scores
+    for (const score of scores) {
+      const prevScore = prevScoresRef.current.get(score.url);
+      if (prevScore !== undefined) {
+        const drop = prevScore - score.compositeScore;
+        if (score.grade === 'critical' && drop > 0) {
+          dispatch({
+            type: 'ADD_ALERT',
+            alert: {
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              mintUrl: score.url,
+              mintName: score.name,
+              type: 'critical',
+              message: `${score.name} dropped to CRITICAL (${score.compositeScore.toFixed(0)}/100). Funds at risk.`,
+              score: score.compositeScore,
+              previousScore: prevScore,
+              dismissed: false,
+              actionTaken: 'pending',
+            },
+          });
+        } else if (drop >= 10) {
+          dispatch({
+            type: 'ADD_ALERT',
+            alert: {
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              mintUrl: score.url,
+              mintName: score.name,
+              type: 'score_drop',
+              message: `${score.name} score dropped ${drop.toFixed(0)} points (${prevScore.toFixed(0)} -> ${score.compositeScore.toFixed(0)})`,
+              score: score.compositeScore,
+              previousScore: prevScore,
+              dismissed: false,
+            },
+          });
+        } else if (prevScore < 50 && score.compositeScore >= 75) {
+          dispatch({
+            type: 'ADD_ALERT',
+            alert: {
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              mintUrl: score.url,
+              mintName: score.name,
+              type: 'recovery',
+              message: `${score.name} recovered to SAFE (${score.compositeScore.toFixed(0)}/100)`,
+              score: score.compositeScore,
+              previousScore: prevScore,
+              dismissed: false,
+            },
+          });
+        }
+      }
+      prevScoresRef.current.set(score.url, score.compositeScore);
+    }
+
     dispatch({ type: 'SET_SCORES', scores });
     scoringRef.current = false;
   }, []);
@@ -118,7 +200,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_VIEW', view });
   }, []);
 
-  // Initial scoring + interval
+  const effectiveScores = state.simulationActive && state.simulationScores
+    ? state.simulationScores
+    : state.scores;
+
   useEffect(() => {
     walletEngine.initialize().then(() => {
       refreshBalances();
@@ -133,7 +218,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [runScoring, refreshBalances]);
 
   return (
-    <StoreContext.Provider value={{ state, dispatch, runScoring, refreshBalances, setView }}>
+    <StoreContext.Provider value={{ state, dispatch, runScoring, refreshBalances, setView, effectiveScores }}>
       {children}
     </StoreContext.Provider>
   );
