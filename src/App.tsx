@@ -1,89 +1,61 @@
-import { WalletProvider, useWallet } from './context/WalletContext';
-import { Home } from './components/Home';
-import { Receive } from './components/Receive';
-import { Send } from './components/Send';
-import { MintSettings } from './components/MintSettings';
-import { About } from './components/About';
-import { GraduationModal } from './components/GraduationModal';
+import { useState } from 'react';
+import { StateProvider, useAppState, useDispatch, getTotalBalance } from './state/store';
+import { config, validateConfig } from './core/config';
+import { Home } from './ui/screens/Home';
+import { Receive } from './ui/screens/Receive';
+import { Send } from './ui/screens/Send';
+import { MintSettings } from './ui/screens/MintSettings';
+import { GraduationModal } from './ui/screens/GraduationModal';
 
-function AppContent() {
-  const { currentScreen, setCurrentScreen } = useWallet();
+validateConfig();
+
+type Screen = 'home' | 'receive' | 'send' | 'settings';
+
+function AppInner() {
+  const [screen, setScreen] = useState<Screen>('home');
+  const [showGraduation, setShowGraduation] = useState(false);
+  const state = useAppState();
+  const dispatch = useDispatch();
+  const totalBalance = getTotalBalance(state);
+
+  const handleNavigate = (target: 'receive' | 'send' | 'settings') => {
+    setScreen(target);
+  };
+
+  const handleBack = () => setScreen('home');
+
+  // Check graduation threshold
+  if (
+    !state.graduationShown &&
+    !showGraduation &&
+    totalBalance >= config.ui.graduationThresholdDemo
+  ) {
+    setShowGraduation(true);
+  }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-50">
-      {/* Navigation */}
-      <nav className="border-b border-gray-800/50 bg-gray-950/80 backdrop-blur-sm sticky top-0 z-40">
-        <div className="max-w-lg mx-auto flex items-center justify-between px-4 py-3">
-          <button
-            onClick={() => setCurrentScreen('home')}
-            className="text-sm font-bold bg-gradient-to-r from-amber-400 to-green-400 bg-clip-text text-transparent"
-          >
-            Freedom Wallet
-          </button>
-          <div className="flex gap-1">
-            <NavButton
-              label="Home"
-              active={currentScreen === 'home'}
-              onClick={() => setCurrentScreen('home')}
-            />
-            <NavButton
-              label="Mints"
-              active={currentScreen === 'settings'}
-              onClick={() => setCurrentScreen('settings')}
-            />
-            <NavButton
-              label="About"
-              active={currentScreen === 'about'}
-              onClick={() => setCurrentScreen('about')}
-            />
-          </div>
-        </div>
-      </nav>
+    <>
+      {screen === 'home' && <Home onNavigate={handleNavigate} />}
+      {screen === 'receive' && <Receive onBack={handleBack} />}
+      {screen === 'send' && <Send onBack={handleBack} />}
+      {screen === 'settings' && <MintSettings onBack={handleBack} />}
 
-      {/* Content */}
-      <main className="pb-8">
-        {currentScreen === 'home' && <Home />}
-        {currentScreen === 'receive' && <Receive />}
-        {currentScreen === 'send' && <Send />}
-        {currentScreen === 'settings' && <MintSettings />}
-        {currentScreen === 'about' && <About />}
-      </main>
-
-      {/* Graduation Modal */}
-      <GraduationModal />
-    </div>
+      {showGraduation && (
+        <GraduationModal
+          onClose={() => {
+            setShowGraduation(false);
+            dispatch({ type: 'SET_GRADUATION_SHOWN', value: true });
+          }}
+        />
+      )}
+    </>
   );
 }
 
-function NavButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
+export default function App() {
   return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-        active
-          ? 'bg-gray-800 text-white'
-          : 'text-gray-500 hover:text-gray-300'
-      }`}
-    >
-      {label}
-    </button>
+    <StateProvider>
+      <AppInner />
+    </StateProvider>
   );
 }
-
-function App() {
-  return (
-    <WalletProvider>
-      <AppContent />
-    </WalletProvider>
-  );
-}
-
-export default App;

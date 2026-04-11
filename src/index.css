@@ -1,15 +1,254 @@
-@import "tailwindcss";
+@import 'tailwindcss';
+
+/* ─── Design Tokens ─── */
+:root {
+  --font-display: 'Sora', system-ui, sans-serif;
+  --font-body: 'DM Sans', system-ui, sans-serif;
+
+  --bg-root: #0a0a0b;
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --bg-surface-hover: rgba(255, 255, 255, 0.06);
+  --bg-elevated: rgba(255, 255, 255, 0.05);
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-accent: rgba(255, 255, 255, 0.1);
+
+  --amber-400: #fbbf24;
+  --amber-500: #f59e0b;
+  --orange-500: #f97316;
+  --green-400: #4ade80;
+  --green-500: #22c55e;
+  --blue-400: #60a5fa;
+  --red-400: #f87171;
+  --yellow-400: #facc15;
+}
+
+/* ─── Base ─── */
+html {
+  background: var(--bg-root);
+  color-scheme: dark;
+}
 
 body {
-  margin: 0;
-  background-color: #030712;
-  color: #f9fafb;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  scrollbar-width: thin;
-  scrollbar-color: #374151 transparent;
+/* ─── Typography ─── */
+h1, h2, h3, h4, h5, h6,
+.font-display {
+  font-family: var(--font-display);
+}
+
+/* ─── Glass Card ─── */
+.glass {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+.glass-hover:hover {
+  background: var(--bg-surface-hover);
+  border-color: var(--border-accent);
+}
+
+.glass-elevated {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-accent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
+/* ─── Prism Gradient (brand signature) ─── */
+.prism-gradient {
+  background: linear-gradient(
+    135deg,
+    #f59e0b 0%,
+    #f97316 25%,
+    #ef4444 50%,
+    #a855f7 75%,
+    #3b82f6 100%
+  );
+}
+
+.prism-text {
+  background: linear-gradient(
+    135deg,
+    #fbbf24 0%,
+    #f97316 40%,
+    #f87171 70%,
+    #c084fc 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.prism-line {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    #f59e0b 15%,
+    #f97316 30%,
+    #ef4444 45%,
+    #a855f7 65%,
+    #3b82f6 80%,
+    transparent 100%
+  );
+  opacity: 0.4;
+}
+
+/* ─── Glow Effects ─── */
+.glow-amber {
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.15), 0 0 60px rgba(245, 158, 11, 0.05);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.15), 0 0 60px rgba(34, 197, 94, 0.05);
+}
+
+.glow-red {
+  box-shadow: 0 0 20px rgba(248, 113, 113, 0.15), 0 0 60px rgba(248, 113, 113, 0.05);
+}
+
+/* ─── Status Dot ─── */
+.status-dot {
+  position: relative;
+}
+.status-dot::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 9999px;
+  opacity: 0.4;
+  animation: dot-ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+.status-dot-green::after { background: var(--green-400); }
+.status-dot-yellow::after { background: var(--yellow-400); }
+.status-dot-red::after { background: var(--red-400); }
+
+@keyframes dot-ping {
+  0% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+/* ─── Animations ─── */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes prism-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animate-fade-up {
+  animation: fade-up 0.5s ease-out both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out both;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.4s ease-out both;
+}
+
+.animate-shimmer {
+  background-size: 200% auto;
+  animation: shimmer 3s linear infinite;
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-prism {
+  background-size: 200% 200%;
+  animation: prism-shift 6s ease-in-out infinite;
+}
+
+/* Stagger children */
+.stagger-children > * {
+  animation: fade-up 0.4s ease-out both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 360ms; }
+.stagger-children > *:nth-child(8) { animation-delay: 420ms; }
+
+/* ─── Button styles ─── */
+.btn-primary {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: all 0.2s ease;
+}
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+.btn-primary:active {
+  transform: translateY(0);
+}
+
+/* ─── Custom Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ─── Input Focus ─── */
+input:focus, textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+}
+
+/* ─── Noise overlay for depth ─── */
+.noise::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.015;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
