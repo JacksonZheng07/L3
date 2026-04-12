@@ -20,12 +20,12 @@ type ReceiveStep = 'form' | 'waiting' | 'done' | 'failed';
 const QUICK_AMOUNTS = [100, 500, 1_000, 5_000, 10_000];
 
 export default function ReceivePanel() {
-  const { effectiveScores, refreshBalances } = useStore();
+  const { state, effectiveScores, refreshBalances } = useStore();
 
   const [amountStr, setAmountStr] = useState('');
   const [step, setStep]           = useState<ReceiveStep>('form');
   const [invoice, setInvoice]     = useState('');
-  const [quoteId, setQuoteId]     = useState('');
+  const [_quoteId, setQuoteId]    = useState('');
   const [mintUrl, setMintUrl]     = useState('');
   const [credited, setCredited]   = useState(0);
   const [copied, setCopied]       = useState(false);
@@ -115,7 +115,7 @@ export default function ReceivePanel() {
   const selectedMintScore = effectiveScores.find((s) => s.url === mintUrl);
   const isMainnet = state.demoMode === 'mainnet';
   const isMutinynet = state.demoMode === 'mutinynet';
-  const isRealLightning = isMainnet || isMutinynet;
+
 
   return (
     <div className="bg-[#161b22] overflow-hidden">
