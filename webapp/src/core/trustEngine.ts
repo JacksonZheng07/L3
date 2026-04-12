@@ -761,22 +761,32 @@ export async function scoreAllMints(
   cachedKeysets: Map<string, string[]>,
   prevScores: Map<string, number> = new Map(),
 ): Promise<MintScore[]> {
-  // Score mints sequentially to avoid Allium 429 rate limits.
-  // Each mint makes up to 3 Allium calls; firing all mints in parallel
-  // causes 21+ simultaneous requests which triggers rate limiting.
+  // Score mints in batches of 3 to balance speed vs Allium rate limits.
+  // Each mint makes up to 3 Allium calls in parallel internally, so a
+  // batch of 3 = ~9 concurrent requests — fast but under the 429 threshold.
+  const BATCH_SIZE = 3;
   const results: MintScore[] = [];
-  for (const m of mints) {
-    const probe = probeResults.get(m.url) ?? {
-      info: { success: false, latencyMs: 99999, data: null },
-      keysets: { success: false, keysetIds: [] },
-    };
-    const cached = cachedKeysets.get(m.url) ?? [];
-    const prev   = prevScores.get(m.url) ?? 0;
-    try {
-      const score = await scoreMint(m, probe, cached, prev);
-      results.push(score);
-    } catch (err) {
-      console.warn(`[TrustEngine] Failed to score ${m.name}:`, err);
+
+  for (let i = 0; i < mints.length; i += BATCH_SIZE) {
+    const batch = mints.slice(i, i + BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map((m) => {
+        const probe = probeResults.get(m.url) ?? {
+          info: { success: false, latencyMs: 99999, data: null },
+          keysets: { success: false, keysetIds: [] },
+        };
+        const cached = cachedKeysets.get(m.url) ?? [];
+        const prev   = prevScores.get(m.url) ?? 0;
+        return scoreMint(m, probe, cached, prev);
+      }),
+    );
+
+    for (const r of batchResults) {
+      if (r.status === 'fulfilled') {
+        results.push(r.value);
+      } else {
+        console.warn(`[TrustEngine] Failed to score mint:`, r.reason);
+      }
     }
   }
 
