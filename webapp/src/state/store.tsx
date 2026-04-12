@@ -4,7 +4,7 @@ import type { AppState, AppView, MintConfig, MintScore, MigrationEvent, WalletBa
 import { getMintsForMode } from '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
-import { walletEngine } from '../core/walletEngine';
+import { walletApi } from '../core/walletApi';
 import { computeMigrationPlans, executeMigration } from '../core/migrationEngine';
 import { discoverMints } from '../core/mintDiscovery';
 import {
@@ -118,10 +118,10 @@ interface StoreContextType {
   setView: (view: AppView) => void;
   approveMigration: (alertId: string, mintName: string, score: number) => Promise<void>;
   /**
-   * (Re-)initialise the wallet engine with an optional BIP-39 seed.
+   * (Re-)initialise the server wallet engine with discovered mints.
    * Resolves with a WalletConnection describing per-mint status.
    */
-  connectWallet: (bip39seed?: Uint8Array) => Promise<WalletConnection>;
+  connectWallet: () => Promise<WalletConnection>;
   /** Returns the effective scores (simulation overrides real when active) */
   effectiveScores: MintScore[];
 }
@@ -138,9 +138,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
 
   const refreshBalances = useCallback(() => {
-    const balances = walletEngine.getAllBalances();
-    const total = walletEngine.getTotalBalance();
-    dispatch({ type: 'SET_BALANCES', balances, total });
+    walletApi.getAllBalances().then(({ balances, total }) => {
+      dispatch({ type: 'SET_BALANCES', balances, total });
+    });
   }, []);
 
   /** Step 1: Fire all mint probes in parallel, dispatch each result as it arrives */
@@ -266,8 +266,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  /** Re-initialise wallet engine, optionally with a BIP-39 seed. */
-  const connectWallet = useCallback(async (bip39seed?: Uint8Array): Promise<WalletConnection> => {
+  /** Re-initialise wallet engine on the server, optionally with discovered mints. */
+  const connectWallet = useCallback(async (): Promise<WalletConnection> => {
     const currentState = stateRef.current;
     const allMints = mintsRef.current;
     const filteredMints = getMintsForMode(allMints, currentState.demoMode);
@@ -275,7 +275,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const mintStatuses: Record<string, 'idle' | 'connecting' | 'failed' | 'connected'> = {};
     filteredMints.forEach((m) => { mintStatuses[m.url] = 'connecting'; });
 
-    const result = await walletEngine.setMode(currentState.demoMode, filteredMints, bip39seed);
+    const result = await walletApi.setMode(currentState.demoMode, filteredMints);
     filteredMints.forEach((m) => {
       mintStatuses[m.url] = result.ok ? 'connected' : 'failed';
     });
@@ -289,7 +289,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     return {
       connected: result.ok,
-      hasSeed: walletEngine.hasSeed(),
+      hasSeed: false,
       mintStatuses,
     };
   }, [refreshBalances, runScoring]);
@@ -297,7 +297,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const effectiveScores =
     state.simulationActive && state.simulationScores ? state.simulationScores : state.scores;
 
-  // Initialize wallet engine with mode-appropriate mints on mount
+  // Discover mints on mount, tell server about them, then score
   useEffect(() => {
     discoverMints().then((mints) => {
       console.log(`[L3] Discovered ${mints.length} mints from NIP-87`);
@@ -305,7 +305,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'SET_DISCOVERED_MINTS', mints });
 
       const filteredMints = getMintsForMode(mints, stateRef.current.demoMode);
-      walletEngine.setMode(stateRef.current.demoMode, filteredMints).then(() => {
+      walletApi.setMode(stateRef.current.demoMode, filteredMints).then(() => {
         refreshBalances();
         // Run initial scoring so trust scores are available right away
         runScoring();
@@ -322,7 +322,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     prevModeRef.current = state.demoMode;
 
     const filteredMints = getMintsForMode(mintsRef.current, state.demoMode);
-    walletEngine.setMode(state.demoMode, filteredMints).then(() => {
+    walletApi.setMode(state.demoMode, filteredMints).then(() => {
       refreshBalances();
     });
 

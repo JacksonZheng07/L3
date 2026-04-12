@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../state/store';
-import { walletEngine } from '../../core/walletEngine';
+import { walletApi } from '../../core/walletApi';
 import { gradeColor } from '../../lib/theme';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -23,13 +23,12 @@ export default function ReceivePanel() {
   const { state, effectiveScores, refreshBalances } = useStore();
 
   const [amountStr, setAmountStr] = useState('');
-  const [step, setStep]           = useState<ReceiveStep>('form');
-  const [invoice, setInvoice]     = useState('');
-  const [_quoteId, setQuoteId]    = useState('');
-  const [mintUrl, setMintUrl]     = useState('');
-  const [credited, setCredited]   = useState(0);
-  const [copied, setCopied]       = useState(false);
-  const [error, setError]         = useState<string | null>(null);
+  const [step, setStep] = useState<ReceiveStep>('form');
+  const [invoice, setInvoice] = useState('');
+  const [mintUrl, setMintUrl] = useState('');
+  const [credited, setCredited] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const pollRef = useRef(false);
 
@@ -48,14 +47,13 @@ export default function ReceivePanel() {
     setError(null);
     setGenerating(true);
     try {
-      const result = await walletEngine.smartReceive(amount, effectiveScores);
+      const result = await walletApi.smartReceive(amount, effectiveScores);
       if (!result.ok) {
         setError(result.error);
         setGenerating(false);
         return;
       }
       setInvoice(result.data.request);
-      setQuoteId(result.data.quote);
       setMintUrl(result.data.mintUrl);
       setStep('waiting');
       setGenerating(false);
@@ -72,11 +70,10 @@ export default function ReceivePanel() {
     pollRef.current = true;
     (async () => {
       try {
-        const result = await walletEngine.pollMintQuote(url, quote);
+        const result = await walletApi.pollMintQuote(url, quote);
         if (!pollRef.current) return;
         if (result.ok) {
-          const sum = result.data.reduce((s, p) => s + p.amount, 0);
-          setCredited(sum);
+          setCredited(result.data.credited);
           refreshBalances();
           setStep('done');
         } else {
@@ -104,7 +101,6 @@ export default function ReceivePanel() {
   function handleReset() {
     setStep('form');
     setInvoice('');
-    setQuoteId('');
     setMintUrl('');
     setCredited(0);
     setError(null);
@@ -115,7 +111,6 @@ export default function ReceivePanel() {
   const selectedMintScore = effectiveScores.find((s) => s.url === mintUrl);
   const isMainnet = state.demoMode === 'mainnet';
   const isMutinynet = state.demoMode === 'mutinynet';
-
 
   return (
     <div className="bg-[#161b22] overflow-hidden">

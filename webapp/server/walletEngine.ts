@@ -1,7 +1,9 @@
 import { Mint, Wallet, MintQuoteState } from '@cashu/cashu-ts';
 import type { Proof } from '@cashu/cashu-ts';
-import { MINTS } from './config';
-import type { MintConfig, DemoMode, WalletBalance, MigrationEvent, MintScore } from '../state/types';
+import fs from 'fs';
+import path from 'path';
+import { MINTS } from './config.js';
+import type { MintConfig, DemoMode, WalletBalance, MigrationEvent, MintScore } from '../src/state/types.js';
 
 // ── Result helpers ──────────────────────────────────────────────────
 interface Success<T> { ok: true; data: T }
@@ -11,15 +13,24 @@ type Result<T> = Success<T> | Failure;
 function success<T>(data: T): Success<T> { return { ok: true, data }; }
 function failure(error: string): Failure  { return { ok: false, error }; }
 
-// ── localStorage helpers (mode-namespaced) ─────────────────────────
-function storageKeyForMode(mode: DemoMode): string {
-  return `l3_wallet_proofs_${mode}`;
+// ── File-based proof storage ────────────────────────────────────────
+const DATA_DIR = path.resolve(process.cwd(), 'data');
+
+function ensureDataDir(): void {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
 }
 
-function loadProofsFromStorage(mode: DemoMode): Map<string, Proof[]> {
+function proofFilePath(mode: DemoMode): string {
+  return path.join(DATA_DIR, `proofs_${mode}.json`);
+}
+
+function loadProofsFromFile(mode: DemoMode): Map<string, Proof[]> {
   try {
-    const raw = localStorage.getItem(storageKeyForMode(mode));
-    if (!raw) return new Map();
+    const filePath = proofFilePath(mode);
+    if (!fs.existsSync(filePath)) return new Map();
+    const raw = fs.readFileSync(filePath, 'utf-8');
     const obj: Record<string, Proof[]> = JSON.parse(raw);
     return new Map(Object.entries(obj));
   } catch {
@@ -27,15 +38,16 @@ function loadProofsFromStorage(mode: DemoMode): Map<string, Proof[]> {
   }
 }
 
-function saveProofsToStorage(proofs: Map<string, Proof[]>, mode: DemoMode): void {
+function saveProofsToFile(proofs: Map<string, Proof[]>, mode: DemoMode): void {
   try {
+    ensureDataDir();
     const obj: Record<string, Proof[]> = {};
     for (const [url, p] of proofs) {
       obj[url] = p;
     }
-    localStorage.setItem(storageKeyForMode(mode), JSON.stringify(obj));
-  } catch {
-    // silently ignore storage errors (e.g. quota exceeded)
+    fs.writeFileSync(proofFilePath(mode), JSON.stringify(obj, null, 2));
+  } catch (err) {
+    console.error('[WalletEngine] Failed to save proofs:', err);
   }
 }
 
@@ -45,44 +57,24 @@ function mintName(url: string): string {
   return entry?.name ?? url;
 }
 
-// ── CORS proxy ──────────────────────────────────────────────────────
-// In dev, cashu-ts fetch calls are blocked by CORS. Route through Vite's
-// proxy middleware which makes server-side requests on our behalf.
-// https://example.com → /cashu-proxy/example.com
-function toProxyUrl(realUrl: string): string {
-  return '/cashu-proxy/' + realUrl.replace(/^https?:\/\//, '');
-}
-
-// ── WalletEngine ────────────────────────────────────────────────────
+// ── WalletEngine (server-side) ──────────────────────────────────────
 class WalletEngine {
   private mints   = new Map<string, InstanceType<typeof Mint>>();
   private wallets = new Map<string, InstanceType<typeof Wallet>>();
   private proofs  = new Map<string, Proof[]>();
 
   private initialized = false;
-  private currentMode: DemoMode = 'testnet';
-  // In-memory only — never serialized to localStorage
-  private bip39seed: Uint8Array | undefined = undefined;
+  private currentMode: DemoMode = 'mutinynet';
 
   // ── Mode management ────────────────────────────────────────────
   getMode(): DemoMode {
     return this.currentMode;
   }
 
-  hasSeed(): boolean {
-    return this.bip39seed !== undefined;
-  }
-
-  /**
-   * Switch the engine to a new demo mode with the appropriate mint configs.
-   * - Saves current proofs, tears down connections, loads new mode's proofs.
-   * - Initializes only the filtered mints for the given mode.
-   * @param bip39seed Optional BIP-39 64-byte seed for deterministic ecash secrets.
-   */
-  async setMode(mode: DemoMode, mintConfigs: MintConfig[], bip39seed?: Uint8Array): Promise<Result<void>> {
+  async setMode(mode: DemoMode, mintConfigs: MintConfig[]): Promise<Result<void>> {
     // Save current proofs before switching
     if (this.initialized) {
-      saveProofsToStorage(this.proofs, this.currentMode);
+      saveProofsToFile(this.proofs, this.currentMode);
     }
 
     // Reset internal state
@@ -91,46 +83,29 @@ class WalletEngine {
     this.proofs = new Map();
     this.initialized = false;
     this.currentMode = mode;
-    if (bip39seed !== undefined) {
-      this.bip39seed = bip39seed;
-    }
 
     // Load proofs for the new mode
-    this.proofs = loadProofsFromStorage(mode);
+    this.proofs = loadProofsFromFile(mode);
 
     return this._initializeMints(mintConfigs);
-  }
-
-  // ── Init (real mints) ──────────────────────────────────────────
-  /**
-   * @deprecated Use setMode() instead. Kept for backward compatibility.
-   */
-  async initialize(): Promise<Result<void>> {
-    return this.setMode('mainnet', MINTS);
   }
 
   private async _initializeMints(mintConfigs: MintConfig[]): Promise<Result<void>> {
     if (this.initialized) return success(undefined);
     try {
-      const seed = this.bip39seed;
       console.log(`[WalletEngine] Initializing ${mintConfigs.length} mints (mode=${this.currentMode})…`);
 
       const initTasks = mintConfigs.map(async (cfg) => {
-        // Route through Vite's CORS proxy so browser fetch isn't blocked
-        const proxyUrl = toProxyUrl(cfg.url);
-        console.log(`[WalletEngine] init ${cfg.name || cfg.url} via ${proxyUrl}`);
+        // Server-side: use real URLs directly (no CORS issue)
+        console.log(`[WalletEngine] init ${cfg.name || cfg.url}`);
 
-        const mint   = new Mint(proxyUrl);
-        const wallet = seed
-          ? new Wallet(mint, { bip39seed: seed })
-          : new Wallet(mint);
+        const mint   = new Mint(cfg.url);
+        const wallet = new Wallet(mint);
         await wallet.loadMint();
 
-        // Store under the REAL URL (used as the canonical key everywhere)
         this.mints.set(cfg.url, mint);
         this.wallets.set(cfg.url, wallet);
 
-        // ensure proofs map has an entry for every mint
         if (!this.proofs.has(cfg.url)) {
           this.proofs.set(cfg.url, []);
         }
@@ -138,7 +113,6 @@ class WalletEngine {
         console.log(`[WalletEngine] ✓ ${cfg.name || cfg.url} connected`);
       });
 
-      // initialize all mints in parallel; don't let one failure block the rest
       const results = await Promise.allSettled(initTasks);
       const failures = results.filter((r) => r.status === 'rejected');
       if (failures.length > 0) {
@@ -201,15 +175,10 @@ class WalletEngine {
     }
   }
 
-  /**
-   * Trust-score-aware receive: auto-selects the best mint to receive into
-   * based on composite trust scores. Picks the highest-scoring online mint.
-   */
   async smartReceive(
     amount: number,
     scores: MintScore[],
   ): Promise<Result<{ quote: string; request: string; mintUrl: string }>> {
-    // Filter to scored, online, non-critical mints that we have wallets for
     const eligible = scores
       .filter((s) => s.isOnline && s.grade !== 'critical' && this.wallets.has(s.url))
       .sort((a, b) => b.compositeScore - a.compositeScore);
@@ -217,7 +186,6 @@ class WalletEngine {
     if (eligible.length > 0) {
       console.log(`[WalletEngine] smartReceive: ${amount} sats, ${eligible.length} eligible mints, best=${eligible[0].name} (score ${eligible[0].compositeScore.toFixed(0)})`);
 
-      // Try mints in trust-score order until one succeeds
       for (const mint of eligible) {
         const result = await this.receive(mint.url, amount);
         if (result.ok) {
@@ -227,7 +195,7 @@ class WalletEngine {
       }
     }
 
-    // Fallback: no scores yet (scoring hasn't run) — try any connected wallet
+    // Fallback: no scores yet — try any connected wallet
     const connected = Array.from(this.wallets.keys());
     if (connected.length > 0) {
       console.log(`[WalletEngine] smartReceive: no scored mints, falling back to ${connected.length} connected wallet(s)`);
@@ -289,7 +257,7 @@ class WalletEngine {
 
       const updatedProofs = [...keep, ...meltResult.change];
       this.proofs.set(mintUrl, updatedProofs);
-      saveProofsToStorage(this.proofs, this.currentMode);
+      saveProofsToFile(this.proofs, this.currentMode);
 
       const paid = meltResult.quote.state === 'PAID';
       console.log(`[WalletEngine] send: ${paid ? 'PAID ✓' : 'FAILED ✗'} — preimage=${meltResult.quote.payment_preimage?.slice(0, 16) ?? 'none'}…`);
@@ -304,25 +272,10 @@ class WalletEngine {
     }
   }
 
-  /**
-   * Trust-score-aware send: pays a Lightning invoice by preferring to
-   * drain the least-trusted (highest rug-pull risk) mints first.
-   *
-   * Strategy:
-   *   1. If a single mint can cover the invoice, pick the lowest-trust one
-   *      that can — get our money out of the riskiest place first.
-   *   2. If no single mint has enough, consolidate into the highest-trust
-   *      mint by migrating from the least-trusted donors first, then melt
-   *      from the safe mint.
-   *
-   * Either way the net effect is: risky mints get drained, safe mints
-   * retain their balance.
-   */
   async smartSend(
     invoice: string,
     scores: MintScore[],
   ): Promise<Result<{ paid: boolean; preimage: string | null; usedMints: string[] }>> {
-    // Rank mints by trust score (descending), only online + initialized
     const ranked = scores
       .filter((s) => s.isOnline && this.wallets.has(s.url))
       .sort((a, b) => b.compositeScore - a.compositeScore);
@@ -331,7 +284,6 @@ class WalletEngine {
       return failure('smartSend: no eligible online mints');
     }
 
-    // Build balance view sorted by trust score descending (safest first)
     const fundedMints: { url: string; balance: number; score: number }[] = [];
     for (const s of ranked) {
       const bal = this.getBalance(s.url);
@@ -347,7 +299,6 @@ class WalletEngine {
     console.log(`[WalletEngine] smartSend: ${fundedMints.length} funded mints:`,
       fundedMints.map((m) => `${mintName(m.url)} (score ${m.score.toFixed(0)}, ${m.balance} sats)`));
 
-    // Get a cost estimate from any available mint
     let estimatedCost = 0;
     for (const m of fundedMints) {
       try {
@@ -371,8 +322,7 @@ class WalletEngine {
       );
     }
 
-    // Step 1: Try paying directly from the LEAST-trusted mint that can cover
-    // the full amount — drain risky mints first to keep money safe.
+    // Try paying from the LEAST-trusted mint first (drain risky mints)
     const riskiestFirst = [...fundedMints].reverse();
     for (const m of riskiestFirst) {
       if (m.balance >= estimatedCost) {
@@ -384,15 +334,13 @@ class WalletEngine {
       }
     }
 
-    // Step 2: No single mint has enough — consolidate into the safest mint
-    // by draining the riskiest donors first.
-    const safestMint = fundedMints[0]; // highest trust score
+    // Consolidate into safest mint then pay
+    const safestMint = fundedMints[0];
     console.log(`[WalletEngine] smartSend: consolidating into ${mintName(safestMint.url)} (score ${safestMint.score.toFixed(0)}, safest)`);
     const needed = estimatedCost - safestMint.balance;
     let consolidated = 0;
     const usedMints = [safestMint.url];
 
-    // Donors: every other funded mint, riskiest first
     const donors = fundedMints.slice(1).reverse();
     for (const donor of donors) {
       if (consolidated >= needed) break;
@@ -411,7 +359,6 @@ class WalletEngine {
       }
     }
 
-    // Pay from the safe mint
     const result = await this.send(safestMint.url, invoice);
     if (result.ok) {
       return success({ ...result.data, usedMints });
@@ -455,7 +402,7 @@ class WalletEngine {
 
       const updatedSourceProofs = [...keep, ...meltResult.change];
       this.proofs.set(fromMintUrl, updatedSourceProofs);
-      saveProofsToStorage(this.proofs, this.currentMode);
+      saveProofsToFile(this.proofs, this.currentMode);
 
       const newProofs = await targetWallet.mintProofsBolt11(amount, mintQuote.quote);
       this.addProofs(toMintUrl, newProofs);
@@ -480,7 +427,7 @@ class WalletEngine {
   private addProofs(mintUrl: string, newProofs: Proof[]): void {
     const existing = this.proofs.get(mintUrl) ?? [];
     this.proofs.set(mintUrl, [...existing, ...newProofs]);
-    saveProofsToStorage(this.proofs, this.currentMode);
+    saveProofsToFile(this.proofs, this.currentMode);
   }
 }
 

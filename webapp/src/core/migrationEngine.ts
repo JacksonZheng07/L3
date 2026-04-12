@@ -14,7 +14,7 @@ import {
   MIGRATION_HYSTERESIS,
   REBALANCE_DRIFT_PCT,
 } from './config';
-import { walletEngine } from './walletEngine';
+import { walletApi } from './walletApi';
 
 export interface MigrationPlan {
   fromMint: string;
@@ -129,7 +129,7 @@ export function computeMigrationPlans(
 export async function executeMigration(
   plan: MigrationPlan,
 ): Promise<MigrationEvent | null> {
-  const result = await walletEngine.migrate(
+  const result = await walletApi.migrate(
     plan.fromMint,
     plan.toMint,
     plan.amount,

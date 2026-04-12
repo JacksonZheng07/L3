@@ -4,23 +4,27 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tsx watch server/index.ts",
     "build": "tsc -b && vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@cashu/cashu-ts": "^3.6.3",
+    "express": "^5.2.1",
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^1.8.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "recharts": "^3.8.1"
+    "recharts": "^3.8.1",
+    "tsx": "^4.21.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/vite": "^4.2.2",
+    "@types/express": "^5.0.6",
     "@types/node": "^24.12.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

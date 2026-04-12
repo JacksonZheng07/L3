@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../../state/store';
-import { mnemonicToSeed, validateMnemonicLength } from '../../lib/bip39';
 import type { WalletConnection } from '../../state/types';
-import { Wallet, ShieldCheck, AlertTriangle, Loader, CheckCircle, XCircle, Eye, EyeOff } from 'lucide-react';
+import { Wallet, ShieldCheck, Loader, CheckCircle, XCircle } from 'lucide-react';
 
 const STATUS_ICON: Record<string, React.ReactNode> = {
   idle:       <span className="h-2 w-2 rounded-full bg-[#30363d]" />,
@@ -15,28 +14,15 @@ export default function WalletConnectPanel() {
   const { state, dispatch, connectWallet, refreshBalances } = useStore();
   const { demoMode, discoveredMints, balances } = state;
 
-  const [mnemonic, setMnemonic] = useState('');
-  const [showMnemonic, setShowMnemonic] = useState(false);
   const [status, setStatus] = useState<WalletConnection | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const mnemonicWords = mnemonic.trim().split(/\s+/).filter(Boolean);
-  const mnemonicOk = mnemonic.trim() === '' || validateMnemonicLength(mnemonic);
 
   async function handleConnect() {
     setError(null);
     setLoading(true);
     try {
-      let seed: Uint8Array | undefined;
-      if (mnemonic.trim() !== '') {
-        if (!validateMnemonicLength(mnemonic)) {
-          setError('Mnemonic must be 12, 18, or 24 words.');
-          return;
-        }
-        seed = await mnemonicToSeed(mnemonic.trim());
-      }
-      const result = await connectWallet(seed);
+      const result = await connectWallet();
       setStatus(result);
       refreshBalances();
     } catch (e) {
@@ -99,62 +85,10 @@ export default function WalletConnectPanel() {
           </div>
         </div>
 
-        {/* Mnemonic input */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-[#8b949e]/60">
-              Seed Phrase <span className="normal-case tracking-normal">(optional — enables deterministic tokens)</span>
-            </div>
-            <button
-              onClick={() => setShowMnemonic((v) => !v)}
-              className="text-[#8b949e] hover:text-[#c9d1d9] transition-colors"
-            >
-              {showMnemonic ? <EyeOff size={12} /> : <Eye size={12} />}
-            </button>
-          </div>
-          <textarea
-            rows={3}
-            placeholder="word1 word2 word3 … (12, 18, or 24 words)"
-            value={mnemonic}
-            onChange={(e) => setMnemonic(e.target.value)}
-            className="w-full text-sm font-mono p-3 rounded-lg border bg-[#0d1117] text-[#c9d1d9] placeholder-[#8b949e]/30 focus:outline-none transition-colors resize-none"
-            style={{
-              borderColor: !mnemonicOk ? 'rgba(248,81,73,0.5)' : mnemonic ? 'rgba(88,166,255,0.4)' : '#30363d',
-              filter: !showMnemonic && mnemonic ? 'blur(4px)' : 'none',
-            }}
-          />
-          <div className="flex items-center justify-between mt-1">
-            {!mnemonicOk && (
-              <span className="text-[10px] font-mono text-[#f85149]">
-                Must be 12, 18, or 24 words (currently {mnemonicWords.length})
-              </span>
-            )}
-            {mnemonicOk && mnemonic && (
-              <span className="text-[10px] font-mono text-[#3fb950]">
-                {mnemonicWords.length} words ✓
-              </span>
-            )}
-            {!mnemonic && (
-              <span className="text-[10px] font-mono text-[#8b949e]/50">
-                Leave blank to use random ecash secrets
-              </span>
-            )}
-            <span />
-          </div>
-          {/* Security note */}
-          <div className="mt-2 flex items-start gap-2 rounded-lg border border-[#d29922]/20 bg-[#d29922]/05 p-3">
-            <AlertTriangle size={12} className="text-[#d29922] shrink-0 mt-0.5" />
-            <p className="text-[10px] font-mono text-[#d29922]/80 leading-relaxed">
-              Seed phrase is held in memory only and never written to storage or transmitted.
-              Use a throwaway testnet seed for demos.
-            </p>
-          </div>
-        </div>
-
         {/* Connect button */}
         <button
           onClick={handleConnect}
-          disabled={loading || !mnemonicOk}
+          disabled={loading}
           className="w-full py-2.5 text-sm font-mono rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           style={{ background: 'rgba(88,166,255,0.1)', borderColor: 'rgba(88,166,255,0.3)', color: '#58a6ff' }}
         >
