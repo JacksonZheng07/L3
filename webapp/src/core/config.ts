@@ -4,14 +4,30 @@ export const ALLIUM_API_KEY = import.meta.env.VITE_ALLIUM_API_KEY || '';
 export const ALLIUM_BASE_URL = 'https://api.allium.so/api/v1/developer';
 
 export const TESTNET_MINT_URL = 'https://testnut.cashu.space';
+export const MUTINYNET_MINT_URL = 'https://cashu.mutinynet.com';
+
+// URLs that are test-only (excluded from mainnet)
+const TEST_MINT_URLS = new Set([TESTNET_MINT_URL, MUTINYNET_MINT_URL]);
 
 /** Return the subset of mints appropriate for the given demo mode. */
 export function getMintsForMode(allMints: MintConfig[], mode: DemoMode): MintConfig[] {
   switch (mode) {
-    case 'testnet':
-      return allMints.filter((m) => m.url === TESTNET_MINT_URL);
+    case 'mutinynet': {
+      const found = allMints.filter((m) => m.url === MUTINYNET_MINT_URL);
+      if (found.length === 0) {
+        return [{ url: MUTINYNET_MINT_URL, name: 'Mutinynet Cashu', operatorAddresses: [] }];
+      }
+      return found;
+    }
+    case 'testnet': {
+      const found = allMints.filter((m) => m.url === TESTNET_MINT_URL);
+      if (found.length === 0) {
+        return [{ url: TESTNET_MINT_URL, name: 'Testnut', operatorAddresses: [] }];
+      }
+      return found;
+    }
     case 'mainnet':
-      return allMints.filter((m) => m.url !== TESTNET_MINT_URL);
+      return allMints.filter((m) => !TEST_MINT_URLS.has(m.url));
   }
 }
 
@@ -25,27 +41,38 @@ if (ALLIUM_API_KEY) {
 // ── Mint Registry ─────────────────────────────────────────────────
 // operatorAddresses: Bitcoin addresses associated with the mint operator.
 // When populated, Allium API is queried for on-chain intelligence.
-// Empty = anonymous operator (Allium signals score 0).
+// Empty = anonymous operator (uninformative prior, max σ, capped score ≤70).
 
 export const MINTS: MintConfig[] = [
-  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: [] },
-  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: [] },
-  { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: [] },
-  { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: [] },
-  { url: 'https://mint.0xchat.com',                  name: '0xChat',             operatorAddresses: [] },
-  { url: 'https://mint.lnvoltz.com',                 name: 'LN Voltz',           operatorAddresses: [] },
+  { url: 'https://mint.minibits.cash/Bitcoin', name: 'Minibits',  operatorAddresses: ['1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'] },
+  { url: 'https://mint.coinos.io',             name: 'Coinos',    operatorAddresses: ['3FHNBLobJnbCTFTVakh5TXmEneyf5PT61B'] },
+  { url: 'https://testnut.cashu.space',        name: 'Testnut',   operatorAddresses: ['35hK24tcLEWcgNA4JxpvbkNkoAcDGqQPsP'] },
+  { url: 'https://mint.macadamia.cash',        name: 'Macadamia', operatorAddresses: ['385cR5DM96n1HvBDMzLHPYcw89fZAXULJP'] },
+  { url: 'https://mint.0xchat.com',            name: '0xChat',    operatorAddresses: ['12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'] },
+  { url: 'https://mint.lnvoltz.com',           name: 'LN Voltz',  operatorAddresses: ['1Kr6QSydW9bFQG1mXiPNNu6WpJGmUa9i1g'] },
 ];
 
+// Signal weights — must sum to exactly 1.00.
+//
+// Architecture: 30% Allium on-chain (optional bonus when addresses known) +
+//               70% direct probe signals (always computable, always differ between mints).
+//
+// The 70% direct portion includes two mint-specific signals (capabilities, metadata)
+// that produce real spread between mints even when Allium is unavailable.
 export const WEIGHTS: Record<string, number> = {
-  operator_identity:    0.20,
-  reserve_behavior:     0.20,
-  transaction_patterns: 0.10,
-  counterparty_network: 0.10,
-  availability:         0.10,
-  latency:              0.05,
-  keyset_stability:     0.10,
-  tx_success_rate:      0.10,
-  protocol_version:     0.05,
+  // ── Allium on-chain intelligence (30%) ───────────────────────────
+  operator_identity:    0.10,
+  reserve_behavior:     0.10,
+  transaction_patterns: 0.05,
+  counterparty_network: 0.05,
+  // ── Direct probe signals (70%) ───────────────────────────────────
+  availability:         0.15,  // online/offline — binary but high weight
+  latency:              0.10,  // continuous 0–3000 ms decay
+  keyset_stability:     0.10,  // no unexpected key rotation
+  tx_success_rate:      0.10,  // accumulated from wallet ops
+  protocol_version:     0.05,  // NUT protocol version currency
+  capabilities:         0.10,  // which NUTs the mint supports (varies per mint)
+  metadata_quality:     0.10,  // name / description / contact accountability
 };
 
 export const THRESHOLD_SAFE = 75;

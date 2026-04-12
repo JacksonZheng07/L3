@@ -28,7 +28,7 @@ const initialState: AppState = {
   alerts: [],
   simulationActive: false,
   simulationScores: null,
-  demoMode: 'testnet',
+  demoMode: 'mutinynet',
   entityWallets: [],
   federations: [],
 };
@@ -282,12 +282,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     refreshBalances();
 
+    // Auto-run scoring so trust scores are available immediately
+    if (result.ok) {
+      runScoring();
+    }
+
     return {
       connected: result.ok,
       hasSeed: walletEngine.hasSeed(),
       mintStatuses,
     };
-  }, [refreshBalances]);
+  }, [refreshBalances, runScoring]);
 
   const effectiveScores =
     state.simulationActive && state.simulationScores ? state.simulationScores : state.scores;
@@ -302,6 +307,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const filteredMints = getMintsForMode(mints, stateRef.current.demoMode);
       walletEngine.setMode(stateRef.current.demoMode, filteredMints).then(() => {
         refreshBalances();
+        // Run initial scoring so trust scores are available right away
+        runScoring();
       });
     });
 

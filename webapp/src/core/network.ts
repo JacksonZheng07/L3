@@ -56,12 +56,20 @@ async function fetchWithRetry(
   throw lastError;
 }
 
+// ── CORS proxy helper ────────────────────────────────────────────────
+// Route mint requests through Vite's CORS proxy to avoid browser blocks.
+// https://example.com/v1/info → /cashu-proxy/example.com/v1/info
+function proxyMintUrl(mintUrl: string, path: string): string {
+  const host = mintUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  return `/cashu-proxy/${host}${path}`;
+}
+
 // ── Cashu Mint Probing ───────────────────────────────────────────────
 
 export async function probeMintInfo(mintUrl: string): Promise<MintInfoResult> {
   const start = performance.now();
   try {
-    const response = await fetchWithRetry(`${mintUrl}/v1/info`, {}, 1, 10_000);
+    const response = await fetchWithRetry(proxyMintUrl(mintUrl, '/v1/info'), {}, 1, 10_000);
     const latencyMs = Math.round(performance.now() - start);
 
     if (response.ok) {
@@ -80,7 +88,7 @@ export async function probeMintKeysets(
 ): Promise<MintKeysetResult> {
   try {
     const response = await fetchWithRetry(
-      `${mintUrl}/v1/keysets`,
+      proxyMintUrl(mintUrl, '/v1/keysets'),
       {},
       1,
       10_000,

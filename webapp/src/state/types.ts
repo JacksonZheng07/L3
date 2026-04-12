@@ -114,7 +114,7 @@ export interface WalletConnection {
 }
 
 // Demo environment mode
-export type DemoMode = 'testnet' | 'mainnet';
+export type DemoMode = 'mutinynet' | 'testnet' | 'mainnet';
 
 // Fedimint entity wallets
 export interface EntityWallet {

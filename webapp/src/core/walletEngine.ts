@@ -45,6 +45,14 @@ function mintName(url: string): string {
   return entry?.name ?? url;
 }
 
+// ── CORS proxy ──────────────────────────────────────────────────────
+// In dev, cashu-ts fetch calls are blocked by CORS. Route through Vite's
+// proxy middleware which makes server-side requests on our behalf.
+// https://example.com → /cashu-proxy/example.com
+function toProxyUrl(realUrl: string): string {
+  return '/cashu-proxy/' + realUrl.replace(/^https?:\/\//, '');
+}
+
 // ── WalletEngine ────────────────────────────────────────────────────
 class WalletEngine {
   private mints   = new Map<string, InstanceType<typeof Mint>>();
@@ -105,13 +113,20 @@ class WalletEngine {
     if (this.initialized) return success(undefined);
     try {
       const seed = this.bip39seed;
+      console.log(`[WalletEngine] Initializing ${mintConfigs.length} mints (mode=${this.currentMode})…`);
+
       const initTasks = mintConfigs.map(async (cfg) => {
-        const mint   = new Mint(cfg.url);
+        // Route through Vite's CORS proxy so browser fetch isn't blocked
+        const proxyUrl = toProxyUrl(cfg.url);
+        console.log(`[WalletEngine] init ${cfg.name || cfg.url} via ${proxyUrl}`);
+
+        const mint   = new Mint(proxyUrl);
         const wallet = seed
           ? new Wallet(mint, { bip39seed: seed })
           : new Wallet(mint);
         await wallet.loadMint();
 
+        // Store under the REAL URL (used as the canonical key everywhere)
         this.mints.set(cfg.url, mint);
         this.wallets.set(cfg.url, wallet);
 
@@ -119,6 +134,8 @@ class WalletEngine {
         if (!this.proofs.has(cfg.url)) {
           this.proofs.set(cfg.url, []);
         }
+
+        console.log(`[WalletEngine] ✓ ${cfg.name || cfg.url} connected`);
       });
 
       // initialize all mints in parallel; don't let one failure block the rest
@@ -126,14 +143,18 @@ class WalletEngine {
       const failures = results.filter((r) => r.status === 'rejected');
       if (failures.length > 0) {
         console.warn(
-          `[WalletEngine] ${failures.length}/${mintConfigs.length} mints failed to init`,
+          `[WalletEngine] ${failures.length}/${mintConfigs.length} mints failed to init:`,
           failures.map((f) => (f as PromiseRejectedResult).reason),
         );
       }
 
+      const succeeded = mintConfigs.length - failures.length;
+      console.log(`[WalletEngine] Init complete: ${succeeded}/${mintConfigs.length} mints connected`);
+
       this.initialized = true;
       return success(undefined);
     } catch (err) {
+      console.error(`[WalletEngine] Init failed:`, err);
       return failure(`Initialization failed: ${String(err)}`);
     }
   }
@@ -168,11 +189,14 @@ class WalletEngine {
     mintUrl: string,
     amount: number,
   ): Promise<Result<{ quote: string; request: string }>> {
+    console.log(`[WalletEngine] receive: ${amount} sats from ${mintName(mintUrl)} (${mintUrl})`);
     try {
       const wallet = this.getWallet(mintUrl);
       const quoteRes = await wallet.createMintQuoteBolt11(amount);
+      console.log(`[WalletEngine] receive: invoice generated, quote=${quoteRes.quote.slice(0, 12)}…`);
       return success({ quote: quoteRes.quote, request: quoteRes.request });
     } catch (err) {
+      console.error(`[WalletEngine] receive FAILED:`, err);
       return failure(`receive: ${String(err)}`);
     }
   }
@@ -185,23 +209,38 @@ class WalletEngine {
     amount: number,
     scores: MintScore[],
   ): Promise<Result<{ quote: string; request: string; mintUrl: string }>> {
+    // Filter to scored, online, non-critical mints that we have wallets for
     const eligible = scores
       .filter((s) => s.isOnline && s.grade !== 'critical' && this.wallets.has(s.url))
       .sort((a, b) => b.compositeScore - a.compositeScore);
 
-    if (eligible.length === 0) {
-      return failure('smartReceive: no eligible online mints');
-    }
+    if (eligible.length > 0) {
+      console.log(`[WalletEngine] smartReceive: ${amount} sats, ${eligible.length} eligible mints, best=${eligible[0].name} (score ${eligible[0].compositeScore.toFixed(0)})`);
 
-    // Try mints in trust-score order until one succeeds
-    for (const mint of eligible) {
-      const result = await this.receive(mint.url, amount);
-      if (result.ok) {
-        return success({ ...result.data, mintUrl: mint.url });
+      // Try mints in trust-score order until one succeeds
+      for (const mint of eligible) {
+        const result = await this.receive(mint.url, amount);
+        if (result.ok) {
+          console.log(`[WalletEngine] smartReceive: selected ${mint.name} (score ${mint.compositeScore.toFixed(0)})`);
+          return success({ ...result.data, mintUrl: mint.url });
+        }
       }
     }
 
-    return failure('smartReceive: all mints failed to generate invoice');
+    // Fallback: no scores yet (scoring hasn't run) — try any connected wallet
+    const connected = Array.from(this.wallets.keys());
+    if (connected.length > 0) {
+      console.log(`[WalletEngine] smartReceive: no scored mints, falling back to ${connected.length} connected wallet(s)`);
+      for (const url of connected) {
+        const result = await this.receive(url, amount);
+        if (result.ok) {
+          console.log(`[WalletEngine] smartReceive: fallback to ${mintName(url)}`);
+          return success({ ...result.data, mintUrl: url });
+        }
+      }
+    }
+
+    return failure('smartReceive: no connected mints — connect a wallet first');
   }
 
   async pollMintQuote(
@@ -218,6 +257,8 @@ class WalletEngine {
         if (status.state === MintQuoteState.PAID || status.state === MintQuoteState.ISSUED) {
           const newProofs = await wallet.mintProofsBolt11(status.amount, quoteId);
           this.addProofs(mintUrl, newProofs);
+          const total = newProofs.reduce((s, p) => s + p.amount, 0);
+          console.log(`[WalletEngine] pollMintQuote: PAID ✓ — minted ${total} sats on ${mintName(mintUrl)}, ${newProofs.length} proofs`);
           return success(newProofs);
         }
 
@@ -235,12 +276,14 @@ class WalletEngine {
     mintUrl: string,
     invoice: string,
   ): Promise<Result<{ paid: boolean; preimage: string | null }>> {
+    console.log(`[WalletEngine] send: melting from ${mintName(mintUrl)}, invoice=${invoice.slice(0, 30)}…`);
     try {
       const wallet = this.getWallet(mintUrl);
       const proofs = this.proofs.get(mintUrl) ?? [];
 
       const meltQuote = await wallet.createMeltQuoteBolt11(invoice);
       const needed = meltQuote.amount + meltQuote.fee_reserve;
+      console.log(`[WalletEngine] send: need ${needed} sats (${meltQuote.amount} + ${meltQuote.fee_reserve} fee), have ${proofs.reduce((s, p) => s + p.amount, 0)}`);
       const { keep, send: toSend } = wallet.selectProofsToSend(proofs, needed, true);
       const meltResult = await wallet.meltProofsBolt11(meltQuote, toSend);
 
@@ -248,11 +291,15 @@ class WalletEngine {
       this.proofs.set(mintUrl, updatedProofs);
       saveProofsToStorage(this.proofs, this.currentMode);
 
+      const paid = meltResult.quote.state === 'PAID';
+      console.log(`[WalletEngine] send: ${paid ? 'PAID ✓' : 'FAILED ✗'} — preimage=${meltResult.quote.payment_preimage?.slice(0, 16) ?? 'none'}…`);
+
       return success({
-        paid: meltResult.quote.state === 'PAID',
+        paid,
         preimage: meltResult.quote.payment_preimage,
       });
     } catch (err) {
+      console.error(`[WalletEngine] send FAILED:`, err);
       return failure(`send: ${String(err)}`);
     }
   }
@@ -297,6 +344,9 @@ class WalletEngine {
       return failure('smartSend: no mints have funds');
     }
 
+    console.log(`[WalletEngine] smartSend: ${fundedMints.length} funded mints:`,
+      fundedMints.map((m) => `${mintName(m.url)} (score ${m.score.toFixed(0)}, ${m.balance} sats)`));
+
     // Get a cost estimate from any available mint
     let estimatedCost = 0;
     for (const m of fundedMints) {
@@ -326,6 +376,7 @@ class WalletEngine {
     const riskiestFirst = [...fundedMints].reverse();
     for (const m of riskiestFirst) {
       if (m.balance >= estimatedCost) {
+        console.log(`[WalletEngine] smartSend: draining ${mintName(m.url)} (score ${m.score.toFixed(0)}, riskiest with enough balance)`);
         const result = await this.send(m.url, invoice);
         if (result.ok) {
           return success({ ...result.data, usedMints: [m.url] });
@@ -336,6 +387,7 @@ class WalletEngine {
     // Step 2: No single mint has enough — consolidate into the safest mint
     // by draining the riskiest donors first.
     const safestMint = fundedMints[0]; // highest trust score
+    console.log(`[WalletEngine] smartSend: consolidating into ${mintName(safestMint.url)} (score ${safestMint.score.toFixed(0)}, safest)`);
     const needed = estimatedCost - safestMint.balance;
     let consolidated = 0;
     const usedMints = [safestMint.url];
@@ -375,6 +427,7 @@ class WalletEngine {
     amount: number,
     reason = 'trust-score-migration',
   ): Promise<Result<MigrationEvent>> {
+    console.log(`[WalletEngine] migrate: ${amount} sats ${mintName(fromMintUrl)} → ${mintName(toMintUrl)} (${reason})`);
     const event: MigrationEvent = {
       id: crypto.randomUUID(),
       fromMint: fromMintUrl,
@@ -408,9 +461,11 @@ class WalletEngine {
       this.addProofs(toMintUrl, newProofs);
 
       event.status = 'completed';
+      console.log(`[WalletEngine] migrate: DONE ✓ — ${amount} sats moved ${mintName(fromMintUrl)} → ${mintName(toMintUrl)}`);
       return success(event);
     } catch (err) {
       event.status = 'failed';
+      console.error(`[WalletEngine] migrate FAILED:`, err);
       return failure(`migrate: ${String(err)}`);
     }
   }

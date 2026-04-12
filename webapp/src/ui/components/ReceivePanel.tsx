@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../state/store';
 import { walletEngine } from '../../core/walletEngine';
 import { gradeColor } from '../../lib/theme';
+import { QRCodeSVG } from 'qrcode.react';
 import {
   Download,
   Copy,
@@ -14,7 +15,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
-type ReceiveStep = 'form' | 'invoice' | 'polling' | 'done' | 'failed';
+type ReceiveStep = 'form' | 'waiting' | 'done' | 'failed';
 
 const QUICK_AMOUNTS = [100, 500, 1_000, 5_000, 10_000];
 
@@ -29,13 +30,14 @@ export default function ReceivePanel() {
   const [credited, setCredited]   = useState(0);
   const [copied, setCopied]       = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
   const pollRef = useRef(false);
 
   // Stop polling on unmount
   useEffect(() => () => { pollRef.current = false; }, []);
 
   const amount = parseInt(amountStr.replace(/,/g, ''), 10);
-  const canGenerate = !isNaN(amount) && amount > 0 && step === 'form';
+  const canGenerate = !isNaN(amount) && amount > 0 && step === 'form' && !generating;
 
   // Find the best mint that would be auto-selected
   const bestMint = effectiveScores
@@ -44,40 +46,52 @@ export default function ReceivePanel() {
 
   async function handleGenerate() {
     setError(null);
-    const result = await walletEngine.smartReceive(amount, effectiveScores);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    setGenerating(true);
+    try {
+      const result = await walletEngine.smartReceive(amount, effectiveScores);
+      if (!result.ok) {
+        setError(result.error);
+        setGenerating(false);
+        return;
+      }
+      setInvoice(result.data.request);
+      setQuoteId(result.data.quote);
+      setMintUrl(result.data.mintUrl);
+      setStep('waiting');
+      setGenerating(false);
+
+      // Auto-start polling immediately
+      startPolling(result.data.mintUrl, result.data.quote);
+    } catch (e) {
+      setError(String(e));
+      setGenerating(false);
     }
-    setInvoice(result.data.request);
-    setQuoteId(result.data.quote);
-    setMintUrl(result.data.mintUrl);
-    setStep('invoice');
   }
 
-  async function handlePoll() {
-    setStep('polling');
+  function startPolling(url: string, quote: string) {
     pollRef.current = true;
-    try {
-      const result = await walletEngine.pollMintQuote(mintUrl, quoteId);
-      if (!pollRef.current) return;
-      if (result.ok) {
-        const sum = result.data.reduce((s, p) => s + p.amount, 0);
-        setCredited(sum);
-        refreshBalances();
-        setStep('done');
-      } else {
-        setError(result.error);
-        setStep('failed');
+    (async () => {
+      try {
+        const result = await walletEngine.pollMintQuote(url, quote);
+        if (!pollRef.current) return;
+        if (result.ok) {
+          const sum = result.data.reduce((s, p) => s + p.amount, 0);
+          setCredited(sum);
+          refreshBalances();
+          setStep('done');
+        } else {
+          setError(result.error);
+          setStep('failed');
+        }
+      } catch (e) {
+        if (pollRef.current) {
+          setError(String(e));
+          setStep('failed');
+        }
+      } finally {
+        pollRef.current = false;
       }
-    } catch (e) {
-      if (pollRef.current) {
-        setError(String(e));
-        setStep('failed');
-      }
-    } finally {
-      pollRef.current = false;
-    }
+    })();
   }
 
   function handleCopy() {
@@ -94,15 +108,17 @@ export default function ReceivePanel() {
     setMintUrl('');
     setCredited(0);
     setError(null);
+    setGenerating(false);
     pollRef.current = false;
   }
 
   const selectedMintScore = effectiveScores.find((s) => s.url === mintUrl);
+  const isMainnet = state.demoMode === 'mainnet';
+  const isMutinynet = state.demoMode === 'mutinynet';
+  const isRealLightning = isMainnet || isMutinynet;
 
   return (
-    <div
-      className="bg-[#161b22] overflow-hidden"
-    >
+    <div className="bg-[#161b22] overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-[#21262d]">
         <div className="flex items-center gap-2">
@@ -111,6 +127,16 @@ export default function ReceivePanel() {
           <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#3fb950]/10 text-[#3fb950] border border-[#3fb950]/20">
             LIGHTNING
           </span>
+          {isMutinynet && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#a855f7]/10 text-[#a855f7] border border-[#a855f7]/20">
+              SIGNET
+            </span>
+          )}
+          {isMainnet && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[#f0883e]/10 text-[#f0883e] border border-[#f0883e]/20">
+              REAL SATS
+            </span>
+          )}
         </div>
         {step !== 'form' && (
           <button
@@ -193,39 +219,41 @@ export default function ReceivePanel() {
               className="w-full py-2.5 text-sm font-mono rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               style={{ background: 'rgba(63,185,80,0.1)', borderColor: 'rgba(63,185,80,0.3)', color: '#3fb950' }}
             >
-              <Zap size={13} /> Generate Invoice
+              {generating ? (
+                <><Loader size={13} className="animate-spin" /> Generating...</>
+              ) : (
+                <><Zap size={13} /> Generate Invoice</>
+              )}
             </button>
           </>
         )}
 
-        {/* ── Step 2: Invoice ready ── */}
-        {(step === 'invoice' || step === 'polling') && (
+        {/* ── Step 2: QR Code + Waiting ── */}
+        {step === 'waiting' && (
           <>
-            <div>
-              <div className="text-[9px] font-mono uppercase tracking-widest text-[#8b949e]/60 mb-1.5">
-                Lightning Invoice
+            {/* QR Code - big and scannable */}
+            <div className="flex flex-col items-center">
+              <div className="bg-white p-4 rounded-xl">
+                <QRCodeSVG
+                  value={invoice.toUpperCase()}
+                  size={240}
+                  level="M"
+                  includeMargin={false}
+                />
               </div>
-              <div className="relative rounded-lg border border-[#30363d] bg-[#0d1117] p-3">
-                <p className="text-[10px] font-mono text-[#8b949e] break-all pr-8 leading-relaxed">
-                  {invoice}
-                </p>
-                <button
-                  onClick={handleCopy}
-                  className="absolute top-2 right-2 p-1.5 rounded border border-[#30363d] bg-[#21262d] text-[#8b949e] hover:text-[#c9d1d9] transition-colors"
-                >
-                  {copied ? <Check size={11} className="text-[#3fb950]" /> : <Copy size={11} />}
-                </button>
-              </div>
-              <p className="text-[10px] font-mono text-[#8b949e]/60 mt-1.5">
-                Pay this invoice from any Lightning wallet to receive the ecash tokens.
+              <p className="text-[11px] font-mono text-[#3fb950] mt-3 font-semibold">
+                Scan with any Lightning wallet
+              </p>
+              <p className="text-[10px] font-mono text-[#8b949e] mt-1">
+                Phoenix, Strike, Cash App, Zeus, Alby, etc.
               </p>
             </div>
 
-            {/* Summary */}
-            <div className="rounded-lg border border-[#21262d] bg-[#0d1117] px-4 py-3 space-y-1">
+            {/* Amount + mint info */}
+            <div className="rounded-lg border border-[#21262d] bg-[#0d1117] px-4 py-3 space-y-1.5">
               <div className="flex justify-between text-[10px] font-mono text-[#8b949e]">
                 <span>Amount</span>
-                <span className="text-[#c9d1d9] tabular-nums font-semibold">{amount.toLocaleString()} sats</span>
+                <span className="text-[#c9d1d9] tabular-nums font-bold text-sm">{amount.toLocaleString()} sats</span>
               </div>
               <div className="flex justify-between text-[10px] font-mono text-[#8b949e]">
                 <span>Mint</span>
@@ -236,29 +264,45 @@ export default function ReceivePanel() {
                   <span className="text-[#c9d1d9]">{selectedMintScore?.name ?? mintUrl}</span>
                 </div>
               </div>
+              <div className="flex justify-between text-[10px] font-mono text-[#8b949e]">
+                <span>Network</span>
+                <span className={isMainnet ? 'text-[#f0883e]' : isMutinynet ? 'text-[#a855f7]' : 'text-[#d29922]'}>
+                  {isMainnet ? 'Bitcoin Mainnet' : isMutinynet ? 'Mutinynet Signet' : 'Testnet'}
+                </span>
+              </div>
             </div>
+
+            {/* Copy invoice */}
+            <button
+              onClick={handleCopy}
+              className="w-full flex items-center justify-center gap-2 py-2 text-xs font-mono rounded-lg border border-[#30363d] bg-[#21262d] text-[#8b949e] hover:bg-[#30363d] hover:text-[#c9d1d9] transition-all"
+            >
+              {copied ? (
+                <><Check size={11} className="text-[#3fb950]" /> Copied!</>
+              ) : (
+                <><Copy size={11} /> Copy Invoice</>
+              )}
+            </button>
+
+            {/* Waiting indicator */}
+            <div className="flex items-center justify-center gap-2 py-2 text-sm font-mono text-[#d29922]">
+              <Loader size={14} className="animate-spin" />
+              Waiting for payment...
+            </div>
+
+            {/* Raw invoice (collapsed) */}
+            <details className="group">
+              <summary className="text-[9px] font-mono text-[#8b949e]/50 cursor-pointer hover:text-[#8b949e] transition-colors">
+                Show raw invoice
+              </summary>
+              <p className="text-[9px] font-mono text-[#8b949e]/60 break-all mt-2 leading-relaxed bg-[#0d1117] rounded p-2 border border-[#21262d]">
+                {invoice}
+              </p>
+            </details>
 
             {error && (
               <div className="flex items-center gap-2 text-[11px] font-mono text-[#f85149]">
                 <XCircle size={11} /> {error}
-              </div>
-            )}
-
-            {step === 'invoice' && (
-              <button
-                onClick={handlePoll}
-                className="w-full py-2.5 text-sm font-mono rounded-lg border transition-all flex items-center justify-center gap-2"
-                style={{ background: 'rgba(88,166,255,0.1)', borderColor: 'rgba(88,166,255,0.3)', color: '#58a6ff' }}
-              >
-                <Zap size={13} />
-                Check Payment Status
-              </button>
-            )}
-
-            {step === 'polling' && (
-              <div className="flex items-center justify-center gap-2 py-3 text-sm font-mono text-[#d29922]">
-                <Loader size={14} className="animate-spin" />
-                Waiting for payment…
               </div>
             )}
           </>
@@ -267,17 +311,19 @@ export default function ReceivePanel() {
         {/* ── Step 3: Done ── */}
         {step === 'done' && (
           <div className="space-y-4">
-            <div className="rounded-lg border border-[#3fb950]/25 bg-[#3fb950]/05 p-5 text-center">
-              <CheckCircle size={28} className="text-[#3fb950] mx-auto mb-2" />
+            <div className="rounded-lg border border-[#3fb950]/25 bg-[#3fb950]/05 p-6 text-center">
+              <CheckCircle size={32} className="text-[#3fb950] mx-auto mb-2" />
               <p className="text-sm font-mono font-bold text-[#3fb950]">Payment Received!</p>
-              <p className="text-2xl font-mono font-black text-[#c9d1d9] mt-1 tabular-nums">
+              <p className="text-3xl font-mono font-black text-[#c9d1d9] mt-2 tabular-nums">
                 +{credited.toLocaleString()}
                 <span className="text-sm font-normal text-[#8b949e] ml-1.5">sats</span>
               </p>
-              <p className="text-[10px] font-mono text-[#8b949e] mt-2">
+              <p className="text-[10px] font-mono text-[#8b949e] mt-3">
                 Ecash tokens minted on{' '}
-                <span className="text-[#c9d1d9]">{selectedMintScore?.name ?? mintUrl}</span>
-                {' '}— funds will be distributed automatically.
+                <span className="text-[#c9d1d9] font-semibold">{selectedMintScore?.name ?? mintUrl}</span>
+              </p>
+              <p className="text-[9px] font-mono text-[#8b949e]/60 mt-1">
+                Funds will be distributed across trusted mints automatically.
               </p>
             </div>
             <button

@@ -1,6 +1,6 @@
 import { useStore } from '../../state/store';
 import type { DemoMode } from '../../state/types';
-import { TestTube, Coins, QrCode } from 'lucide-react';
+import { TestTube, Coins, Radio } from 'lucide-react';
 
 const demoModes: {
   mode: DemoMode;
@@ -11,17 +11,24 @@ const demoModes: {
   badge?: string;
 }[] = [
   {
+    mode: 'mutinynet',
+    label: 'Mutinynet',
+    description: 'Signet with real Lightning. Free faucet sats, 30s blocks. Best for demos.',
+    icon: Radio,
+    color: '#a855f7',
+    badge: 'RECOMMENDED',
+  },
+  {
     mode: 'testnet',
-    label: 'Mutinynet Testnet',
-    description: 'Live testnet using Mutinynet signet. Real Lightning transactions with penny amounts. QR code for live demo.',
+    label: 'Testnet',
+    description: 'Fake Lightning (auto-pays). Good for testing UI flows without any wallet.',
     icon: TestTube,
     color: '#d29922',
-    badge: 'LIVE DEMO',
   },
   {
     mode: 'mainnet',
     label: 'Mainnet',
-    description: 'Real Bitcoin mainnet with penny amounts (<100 sats). Production-grade for institutional evaluation.',
+    description: 'Real Bitcoin. Use with caution — real money.',
     icon: Coins,
     color: '#3fb950',
     badge: 'PRODUCTION',
@@ -35,20 +42,11 @@ export default function DemoModeSelector() {
     <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-mono font-semibold text-[#c9d1d9]">
-          Demo Environment
+          Network
         </h3>
-        {state.demoMode === 'testnet' && (
-          <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#d29922] bg-[#d29922]/10 rounded px-2 py-1 border border-[#d29922]/30">
-            <QrCode size={10} />
-            <span>QR Code Ready</span>
-          </div>
-        )}
       </div>
-      <p className="text-[10px] font-mono text-[#8b949e] mb-4">
-        Choose your demo environment. Testnet uses Mutinynet for live Lightning demos with QR codes.
-      </p>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {demoModes.map(({ mode, label, description, icon: Icon, color, badge }) => {
           const isActive = state.demoMode === mode;
           return (
@@ -103,24 +101,6 @@ export default function DemoModeSelector() {
           );
         })}
       </div>
-
-      {/* Testnet QR Code placeholder */}
-      {state.demoMode === 'testnet' && (
-        <div className="mt-4 rounded-lg border border-[#d29922]/30 bg-[#d29922]/5 p-4 text-center">
-          <div className="text-[11px] font-mono font-semibold text-[#d29922] mb-2">
-            Mutinynet Lightning Invoice
-          </div>
-          <div className="w-32 h-32 mx-auto bg-white rounded-lg flex items-center justify-center mb-2">
-            <QrCode size={80} className="text-[#0d1117]" />
-          </div>
-          <div className="text-[9px] font-mono text-[#8b949e]">
-            Scan to fund testnet wallet (100 sats)
-          </div>
-          <div className="text-[9px] font-mono text-[#d29922]/60 mt-1">
-            Invoice generated on connect
-          </div>
-        </div>
-      )}
     </div>
   );
 }

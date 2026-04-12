@@ -1,16 +1,18 @@
 /**
  * L³ Trust Engine
  *
- * Computes composite trust scores for Cashu/Fedimint mints using 9 signals
- * across two source categories:
- *   • Allium on-chain intelligence  (60% total weight)
- *   • Direct mint probes            (40% total weight)
+ * Computes composite trust scores for Cashu/Fedimint mints using 11 signals:
+ *   • Allium on-chain intelligence  (30% total weight — optional bonus)
+ *   • Direct mint probes            (70% total weight — always computed)
+ *
+ * The 70% direct portion contains signals that genuinely differ between mints
+ * (capabilities, metadata, latency) so scores spread even when Allium is unavailable.
  *
  * Each signal carries a point estimate (value) AND an uncertainty (sigma).
- * The composite score is modeled as a Gaussian N(μ, σ²), enabling:
- *   - Probabilistic grades (pSafe, pWarning, pCritical) instead of hard thresholds
- *   - Sharpe-ratio portfolio weights that penalise uncertain mints
- *   - Kelly-criterion sizing as a second opinion on allocation
+ * The composite score is modelled as N(μ, σ²), enabling:
+ *   - Probabilistic grades (pSafe, pWarning, pCritical) via Gaussian CDF
+ *   - MVO-optimal allocation: w* ∝ (μ − r_f) / σ²  (tangency portfolio)
+ *   - Kelly-criterion sizing as a second-opinion allocation
  *   - Momentum-adjusted scoring via score velocity
  */
 
@@ -19,8 +21,6 @@ import {
   WEIGHTS,
   THRESHOLD_SAFE,
   THRESHOLD_WARNING,
-  LATENCY_EXCELLENT,
-  LATENCY_ACCEPTABLE,
   KNOWN_VERSION_PREFIX,
   MAX_ALLOCATION,
 } from './config';
@@ -34,8 +34,6 @@ import { normalCDF } from '../lib/stats';
 // ── Constants ────────────────────────────────────────────────────────
 /** Weight applied to score velocity when computing adjusted score */
 const MOMENTUM_LAMBDA = 0.3;
-/** Cap on Sharpe ratio to prevent numerical blow-up when σ → 0 */
-const MAX_SHARPE = 10;
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -317,15 +315,10 @@ export function scoreAvailability(infoResult: ProbeResult['info']): SignalResult
 
 export function scoreLatency(infoResult: ProbeResult['info']): SignalResult {
   const ms = infoResult.latencyMs;
-  let value: number;
-  let explanation: string;
-
-  if (ms <= LATENCY_EXCELLENT)      { value = 1.0; explanation = `${ms}ms (excellent)`; }
-  else if (ms <= LATENCY_ACCEPTABLE){ value = 0.5; explanation = `${ms}ms (acceptable)`; }
-  else                              { value = 0.0; explanation = `${ms}ms (very slow — concern)`; }
-
-  // Network jitter adds moderate uncertainty; latency can vary run-to-run
-  return sig('latency', value, 'latency', 'direct', `Response time: ${explanation}`, 0.12);
+  // Continuous linear decay: 0ms=1.0, 3000ms=0.0 — produces real spread between mints
+  const value = clamp(1 - ms / 3000);
+  const label = ms <= 300 ? 'excellent' : ms <= 800 ? 'good' : ms <= 1500 ? 'acceptable' : ms <= 3000 ? 'slow' : 'very slow';
+  return sig('latency', value, 'latency', 'direct', `Response time: ${ms}ms (${label})`, 0.12);
 }
 
 export function scoreKeysetStability(
@@ -400,6 +393,93 @@ export function scoreProtocolVersion(infoResult: ProbeResult['info']): SignalRes
   }
   return sig('protocol_version', 0.5, 'protocol_version', 'direct',
     `Version ${version} — not ${KNOWN_VERSION_PREFIX}.x (may be outdated)`, 0.05);
+}
+
+/**
+ * Score which Cashu NUTs (Notation, Usage, and Terminology) the mint supports.
+ * Each NUT represents a protocol capability. More supported NUTs → more feature-complete
+ * and likely more actively maintained operator. Values differ significantly between mints.
+ *
+ * Scoring:
+ *   NUT-04 (mint tokens): +0.10 — basic receive
+ *   NUT-05 (melt tokens): +0.15 — basic send
+ *   NUT-07 (check state): +0.15 — critical for UX reliability
+ *   NUT-09 (restore):     +0.10 — backup/recovery
+ *   NUT-10 (conditions):  +0.05 — scripting
+ *   NUT-11 (P2PK):        +0.05 — payments to pubkey
+ *   NUT-12 (DLEQ proofs): +0.10 — cryptographic soundness
+ *   NUT-14 (HTLCs):       +0.05 — atomic swaps
+ */
+export function scoreMintCapabilities(infoResult: ProbeResult['info']): SignalResult {
+  if (!infoResult.success || !infoResult.data) {
+    return sig('capabilities', 0.1, 'capabilities', 'direct',
+      'Mint offline — cannot probe NUT capabilities', 0.15);
+  }
+
+  const nuts = (infoResult.data.nuts as Record<string, unknown>) ?? {};
+  const has = (n: string) => n in nuts;
+
+  let score = 0.25; // base: mint responded at all
+  const feats: string[] = [];
+
+  if (has('4'))  { score += 0.10; feats.push('NUT-04 mint'); }
+  if (has('5'))  { score += 0.15; feats.push('NUT-05 melt'); }
+  if (has('7'))  { score += 0.15; feats.push('NUT-07 state-check'); }
+  if (has('9'))  { score += 0.10; feats.push('NUT-09 restore'); }
+  if (has('10')) { score += 0.05; feats.push('NUT-10 conditions'); }
+  if (has('11')) { score += 0.05; feats.push('NUT-11 P2PK'); }
+  if (has('12')) { score += 0.10; feats.push('NUT-12 DLEQ'); }
+  if (has('14')) { score += 0.05; feats.push('NUT-14 HTLC'); }
+
+  const nutCount = feats.length;
+  // More NUTs → more certain this is an actively-maintained implementation
+  const sigma = nutCount >= 6 ? 0.06 : nutCount >= 3 ? 0.10 : 0.18;
+
+  return sig('capabilities', clamp(score), 'capabilities', 'direct',
+    nutCount > 0 ? `${nutCount} NUTs: ${feats.join(', ')}` : 'No NUTs reported — minimal compliance', sigma);
+}
+
+/**
+ * Score operator accountability signals from mint metadata (/v1/info).
+ * A mint with a name, description, and contact methods is more accountable than
+ * one that reveals nothing. These fields vary significantly between operators.
+ *
+ * Scoring:
+ *   Name present (>2 chars):       +0.20
+ *   Description present (>20 chars): +0.20
+ *   Contact methods listed:         +0.25 (+0.05 bonus for verifiable type)
+ *   MOTD present:                   +0.10
+ */
+export function scoreMintMetadata(infoResult: ProbeResult['info']): SignalResult {
+  if (!infoResult.success || !infoResult.data) {
+    return sig('metadata_quality', 0, 'metadata_quality', 'direct',
+      'Mint offline — cannot read metadata', 0.15);
+  }
+
+  const d = infoResult.data;
+  let score = 0.1; // base: mint is reachable
+  const reasons: string[] = [];
+
+  const name    = String(d.name ?? '');
+  const desc    = String(d.description ?? d.description_long ?? '');
+  const contact = Array.isArray(d.contact) ? (d.contact as Dict[]) : [];
+  const motd    = String(d.motd ?? '');
+
+  if (name.length > 2)  { score += 0.20; reasons.push(`Name: "${name}"`); }
+  if (desc.length > 20) { score += 0.20; reasons.push(`Description: ${desc.length} chars`); }
+  if (contact.length > 0) {
+    score += 0.20;
+    reasons.push(`${contact.length} contact method(s)`);
+    const verifiable = contact.some((c) =>
+      ['email', 'twitter', 'nostr', 'url'].includes(String(c.type ?? '')));
+    if (verifiable) { score += 0.10; reasons.push('Verifiable contact'); }
+  }
+  if (motd.length > 0)  { score += 0.10; reasons.push('Has MOTD'); }
+
+  const sigma = score > 0.7 ? 0.08 : score > 0.4 ? 0.12 : 0.20;
+
+  return sig('metadata_quality', clamp(score), 'metadata_quality', 'direct',
+    reasons.join(' | ') || 'No metadata — operator not identifiable', sigma);
 }
 
 // ╔══════════════════════════════════════════════════════════════════╗
@@ -488,16 +568,39 @@ export async function scoreMint(
     });
   }
 
+  // ── Allium signals ───────────────────────────────────────────────
+  // For anonymous mints (no operator addresses), we have no on-chain data.
+  // Rather than dropping these signals (which would inflate scores by renormalising
+  // to 40% weight → 100%), we inject uninformative Bayesian priors:
+  //   score = 0.5  (maximum-entropy prior — no information either way)
+  //   sigma = 0.45 (near-maximum uncertainty — we genuinely don't know)
+  //
+  // Effect: anonymous mints are capped at ~70/100 (cannot reach "safe" at 75
+  // without verified on-chain data), and their scoreSigma is ~14.6 vs ~5 for
+  // verified mints — the allocation formula then correctly under-weights them.
+  const alliumSignals: SignalResult[] = isAnonymous
+    ? [
+        sig('operator_identity',    0.5, 'operator_identity',    'allium', 'Unverified operator — uninformative prior; σ=0.45 reflects maximum ignorance', 0.45),
+        sig('reserve_behavior',     0.5, 'reserve_behavior',     'allium', 'Unverified operator — reserve data unavailable; uninformative prior', 0.45),
+        sig('transaction_patterns', 0.5, 'transaction_patterns', 'allium', 'Unverified operator — tx pattern data unavailable; uninformative prior', 0.45),
+        sig('counterparty_network', 0.5, 'counterparty_network', 'allium', 'Unverified operator — network data unavailable; uninformative prior', 0.45),
+      ]
+    : [
+        scoreOperatorIdentity(txData, balanceData),
+        scoreReserveBehavior(balanceData, historicalData),
+        scoreTransactionPatterns(txData),
+        scoreCounterpartyNetwork(txData),
+      ];
+
   const signals: SignalResult[] = [
-    scoreOperatorIdentity(txData, balanceData, isAnonymous),
-    scoreReserveBehavior(balanceData, historicalData, isAnonymous),
-    scoreTransactionPatterns(txData, isAnonymous),
-    scoreCounterpartyNetwork(txData, isAnonymous),
+    ...alliumSignals,
     scoreAvailability(probeResult.info),
     scoreLatency(probeResult.info),
     scoreKeysetStability(probeResult.keysets, cachedKeysets),
     scoreTxSuccessRate(0, 0),
     scoreProtocolVersion(probeResult.info),
+    scoreMintCapabilities(probeResult.info),
+    scoreMintMetadata(probeResult.info),
   ];
 
   // ── Composite μ ──────────────────────────────────────────────────
@@ -553,14 +656,18 @@ export async function scoreMint(
 /**
  * Compute portfolio allocations using two complementary methods:
  *
- * 1. **Sharpe-weighted** (stored in `allocationPct`) — the primary allocation.
- *    Weight ∝ (adjustedScore − warningThreshold) / scoreSigma.
- *    Penalises uncertain mints: a high score with lots of uncertainty is
- *    worth less than a moderately high score with tight confidence bounds.
+ * 1. **MVO-optimal** (stored in `allocationPct`) — the primary allocation.
+ *    Weight ∝ (adjustedScore − warningThreshold) / scoreSigma².
+ *
+ *    This is the tangency-portfolio solution for uncorrelated Gaussian assets:
+ *    maximising portfolio Sharpe ratio requires w_i* ∝ (μ_i − r_f) / σ_i².
+ *    Dividing by VARIANCE (σ²) rather than σ penalises uncertainty quadratically.
+ *    A mint with σ=14.6 (anonymous/unverified) receives 8.5× less weight than a
+ *    verified mint with σ=5 at the same score — not 2.9× as with linear Sharpe.
  *
  * 2. **Kelly criterion** (stored in `kellyAllocation`) — a second-opinion
  *    sizing based on the probability-of-safety vs probability-of-loss.
- *    kelly_i = max(0, 2 × pSafe_i − 1), then normalised.
+ *    kelly_i = max(0, 2 × pSafe_i − 1), then normalised + capped at 40%.
  *
  * Both are capped at MAX_ALLOCATION (40%) with iterative redistribution.
  */
@@ -577,21 +684,22 @@ export function computeAllocation(scores: MintScore[]): MintScore[] {
 
   if (eligible.length === 0) return scores;
 
-  // ── Sharpe weights ────────────────────────────────────────────────
+  // ── MVO-optimal weights: w_i* ∝ (μ_i − r_f) / σ_i² ─────────────
+  // Floor sigma at 2 points to prevent division blow-up for near-certain signals.
   const sharpes = eligible.map((s) => {
-    const sigma  = Math.max(s.scoreSigma, 1); // prevent division by zero
-    const excess = s.adjustedScore - THRESHOLD_WARNING;
-    return clamp(excess / sigma, 0, MAX_SHARPE);
+    const sigma   = Math.max(s.scoreSigma, 2);
+    const excess  = Math.max(0, s.adjustedScore - THRESHOLD_WARNING);
+    return excess / (sigma * sigma); // MVO precision-weighted
   });
 
-  const totalSharpe = sharpes.reduce((a, b) => a + b, 0);
+  const totalMVO = sharpes.reduce((a, b) => a + b, 0);
 
-  if (totalSharpe === 0) {
-    // All eligible mints score exactly at/below warning threshold — equal weight
+  if (totalMVO === 0) {
+    // All eligible mints score at/below the warning threshold — equal weight
     eligible.forEach((s) => { s.allocationPct = Math.min(100 / eligible.length, maxPct); });
   } else {
     eligible.forEach((s, i) => {
-      s.allocationPct = Math.round((sharpes[i] / totalSharpe) * 1000) / 10;
+      s.allocationPct = Math.round((sharpes[i] / totalMVO) * 1000) / 10;
     });
   }
 

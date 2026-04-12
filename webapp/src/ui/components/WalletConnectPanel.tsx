@@ -59,7 +59,9 @@ export default function WalletConnectPanel() {
         <span
           className="text-[9px] font-mono px-1.5 py-0.5 rounded border"
           style={
-            demoMode === 'testnet'
+            demoMode === 'mutinynet'
+              ? { background: 'rgba(168,85,247,0.1)', color: '#a855f7', borderColor: 'rgba(168,85,247,0.25)' }
+              : demoMode === 'testnet'
               ? { background: 'rgba(210,153,34,0.1)', color: '#d29922', borderColor: 'rgba(210,153,34,0.25)' }
               : { background: 'rgba(63,185,80,0.1)', color: '#3fb950', borderColor: 'rgba(63,185,80,0.25)' }
           }
@@ -80,7 +82,7 @@ export default function WalletConnectPanel() {
             Network Mode
           </div>
           <div className="flex gap-2">
-            {(['testnet', 'mainnet'] as const).map((m) => (
+            {(['mutinynet', 'testnet', 'mainnet'] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => dispatch({ type: 'SET_DEMO_MODE', mode: m })}
