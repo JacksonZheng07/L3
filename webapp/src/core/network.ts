@@ -143,7 +143,7 @@ async function alliumPost(
         url,
         { method: 'POST', headers, body: JSON.stringify(body) },
         1,
-        15_000,
+        30_000,
       );
 
       if (response.ok) {
