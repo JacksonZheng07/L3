@@ -42,10 +42,7 @@ export default function Sidebar() {
   const totalMints = scores.length;
 
   const lastScored = lastScoredAt
-    ? (() => {
-        const mins = Math.floor((Date.now() - new Date(lastScoredAt).getTime()) / 60000);
-        return mins < 1 ? 'just now' : `${mins}m ago`;
-      })()
+    ? new Date(lastScoredAt).toLocaleTimeString()
     : 'never';
 
   return (

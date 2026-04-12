@@ -43,13 +43,17 @@ export default function ReceivePanel() {
     .filter((s) => s.isOnline && s.grade !== 'critical')
     .sort((a, b) => b.compositeScore - a.compositeScore)[0] ?? null;
 
+  function unwrapError(result: { ok: false; error: string } | { ok: true }): string {
+    return result.ok ? 'unknown error' : result.error;
+  }
+
   async function handleGenerate() {
     setError(null);
     setGenerating(true);
     try {
       const result = await walletApi.smartReceive(amount, effectiveScores);
       if (!result.ok) {
-        setError(result.error);
+        setError(unwrapError(result));
         setGenerating(false);
         return;
       }
@@ -77,7 +81,7 @@ export default function ReceivePanel() {
           refreshBalances();
           setStep('done');
         } else {
-          setError(result.error);
+          setError(unwrapError(result));
           setStep('failed');
         }
       } catch (e) {

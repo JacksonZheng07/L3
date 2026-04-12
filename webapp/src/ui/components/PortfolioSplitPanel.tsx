@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useStore } from '../../state/store';
 import { gradeColor } from '../../lib/theme';
 import { Zap, Plus, Check, RefreshCw } from 'lucide-react';
@@ -25,12 +25,6 @@ export default function PortfolioSplitPanel() {
     return !isNaN(parsed) && parsed > 0 ? parsed : totalBalance;
   })();
 
-  // Auto-populate the input when store balance changes externally
-  useEffect(() => {
-    if (inputStr === '' && totalBalance > 0) {
-      setInputStr(totalBalance.toLocaleString());
-    }
-  }, [totalBalance]);
 
   function handleInput(raw: string) {
     setApplied(false);

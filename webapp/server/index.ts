@@ -90,6 +90,7 @@ app.post('/api/wallet/migrate', async (req: Request, res: Response) => {
 // ── CORS proxy for mint probing ─────────────────────────────────────
 // Browser trust engine needs to probe mints (CORS blocked).
 // /cashu-proxy/testnut.cashu.space/v1/info → https://testnut.cashu.space/v1/info
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use('/cashu-proxy', (req: Request, res: Response, _next: NextFunction) => {
   const target = 'https://' + req.url.slice(1); // strip leading /
 

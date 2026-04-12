@@ -31,12 +31,9 @@ export default function DashboardScreen() {
   const safeGrade =
     safePct >= 70 ? 'safe' : safePct >= 40 ? 'warning' : 'critical';
 
-  const nextScore = (() => {
-    if (!lastScoredAt) return 'Ready';
-    const ms = 30000 - (Date.now() - new Date(lastScoredAt).getTime());
-    if (ms <= 0) return 'Ready';
-    return `${Math.ceil(ms / 1000)}s`;
-  })();
+  const nextScore = lastScoredAt
+    ? new Date(lastScoredAt).toLocaleTimeString()
+    : 'Ready';
 
   const balanceMap = new Map(balances.map((b) => [b.mintUrl, b.balance]));
 
