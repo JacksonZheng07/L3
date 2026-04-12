@@ -2,7 +2,7 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { walletEngine } from './walletEngine.js';
-import { MINTS, getMintsForMode } from './config.js';
+import { MINTS, getMintsForMode, ALLIUM_API_KEY } from './config.js';
 import type { MintScore, MintConfig } from '../src/state/types.js';
 
 const PORT = parseInt(process.env.PORT || '3456', 10);
@@ -85,6 +85,40 @@ app.post('/api/wallet/migrate', async (req: Request, res: Response) => {
   }
   const result = await walletEngine.migrate(from, to, amount, reason);
   res.json(result);
+});
+
+// ── Allium API proxy ────────────────────────────────────────────────
+// Keeps the Allium API key server-side. Replaces the Vercel serverless function.
+const ALLIUM_BASE = 'https://api.allium.so/api/v1/developer';
+const ALLIUM_ENDPOINTS = new Set([
+  '/wallet/balances',
+  '/wallet/balances/history',
+  '/wallet/transactions',
+  '/wallet/positions',
+]);
+
+app.post('/api/allium', async (req: Request, res: Response) => {
+  const endpoint = req.query.endpoint as string;
+  if (!endpoint || !ALLIUM_ENDPOINTS.has(endpoint)) {
+    res.status(400).json({ error: `Invalid endpoint. Allowed: ${[...ALLIUM_ENDPOINTS].join(', ')}` });
+    return;
+  }
+  if (!ALLIUM_API_KEY) {
+    res.status(500).json({ error: 'Allium API key not configured on server' });
+    return;
+  }
+  try {
+    const response = await fetch(`${ALLIUM_BASE}${endpoint}`, {
+      method: 'POST',
+      headers: { 'X-API-KEY': ALLIUM_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (err) {
+    console.error('[Allium Proxy]', err);
+    res.status(502).json({ error: 'Failed to reach Allium API' });
+  }
 });
 
 // ── CORS proxy for mint probing ─────────────────────────────────────

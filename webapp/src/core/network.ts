@@ -126,41 +126,48 @@ async function alliumPost(
   endpoint: string,
   body: unknown,
 ): Promise<Record<string, unknown> | null> {
-  try {
-    let url: string;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  let url: string;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
-    if (useProxy) {
-      // Use the Vercel serverless proxy (API key is server-side)
-      url = `/api/allium?endpoint=${encodeURIComponent(endpoint)}`;
-    } else {
-      // Call Allium directly (dev mode with key in env)
-      url = `${ALLIUM_DIRECT_BASE}${endpoint}`;
-      headers['X-API-KEY'] = ALLIUM_API_KEY;
-    }
-
-    console.log(`[Allium] POST ${url}`);
-
-    const response = await fetchWithRetry(
-      url,
-      { method: 'POST', headers, body: JSON.stringify(body) },
-      2,
-      15_000,
-    );
-
-    if (response.ok) {
-      const data = (await response.json()) as Record<string, unknown>;
-      console.log(`[Allium] Success: ${endpoint}`);
-      return data;
-    }
-
-    const errorText = await response.text().catch(() => 'unknown');
-    console.warn(`[Allium] ${response.status} ${endpoint}: ${errorText}`);
-    return null;
-  } catch (err) {
-    console.warn(`[Allium] Network error on ${endpoint}:`, err);
-    return null;
+  if (useProxy) {
+    url = `/api/allium?endpoint=${encodeURIComponent(endpoint)}`;
+  } else {
+    url = `${ALLIUM_DIRECT_BASE}${endpoint}`;
+    headers['X-API-KEY'] = ALLIUM_API_KEY;
   }
+
+  // Retry with backoff on 429 rate limits
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetchWithRetry(
+        url,
+        { method: 'POST', headers, body: JSON.stringify(body) },
+        1,
+        15_000,
+      );
+
+      if (response.ok) {
+        return (await response.json()) as Record<string, unknown>;
+      }
+
+      if (response.status === 429) {
+        const wait = 2000 * (attempt + 1);
+        console.warn(`[Allium] 429 on ${endpoint}, backing off ${wait}ms…`);
+        await new Promise((r) => setTimeout(r, wait));
+        continue;
+      }
+
+      const errorText = await response.text().catch(() => 'unknown');
+      console.warn(`[Allium] ${response.status} ${endpoint}: ${errorText}`);
+      return null;
+    } catch (err) {
+      console.warn(`[Allium] Network error on ${endpoint}:`, err);
+      return null;
+    }
+  }
+
+  console.warn(`[Allium] Gave up on ${endpoint} after 429 retries`);
+  return null;
 }
 
 /**
