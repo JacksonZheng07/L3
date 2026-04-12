@@ -1,23 +1,10 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "NIXPACKS",
-    "nixpacksPlan": {
-      "providers": ["node"],
-      "phases": {
-        "setup": {
-          "nixPkgs": ["nodejs_22"]
-        },
-        "install": {
-          "cmds": ["cd webapp && npm install"]
-        },
-        "build": {
-          "cmds": ["cd webapp && npm run build"]
-        }
-      }
-    }
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "cd webapp && npm run start"
+    "startCommand": "npx tsx server/index.ts"
   }
 }
