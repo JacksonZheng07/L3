@@ -1,4 +1,5 @@
 import { useStore } from '../../state/store';
+import { computeMigrationPlans, executeMigration } from '../../core/migrationEngine';
 import { AlertTriangle, TrendingDown, ArrowRightLeft, CheckCircle, X, Bell } from 'lucide-react';
 
 const typeConfig: Record<string, { icon: typeof AlertTriangle; color: string; bg: string }> = {
@@ -89,20 +90,37 @@ export default function AlertPanel() {
                 {alert.actionTaken === 'pending' && alert.type === 'migration_suggested' && (
                   <div className="flex gap-2 mt-2">
                     <button
-                      onClick={() => {
+                      onClick={async () => {
                         dispatch({ type: 'SET_ALERT_ACTION', id: alert.id, action: 'migrated' });
-                        dispatch({
-                          type: 'ADD_MIGRATION',
-                          event: {
-                            id: crypto.randomUUID(),
-                            fromMint: alert.mintName,
-                            toMint: 'Best available',
-                            amount: Math.floor(1000 + Math.random() * 4000),
-                            reason: `Manual approval: trust score ${alert.score.toFixed(0)}`,
-                            timestamp: new Date().toISOString(),
-                            status: 'completed',
-                          },
-                        });
+
+                        // Compute real migration plans from current scores/balances
+                        const plans = computeMigrationPlans(
+                          state.scores,
+                          state.balances,
+                          state.totalBalance,
+                        );
+                        // Find a plan matching this alert's mint, or create one
+                        const plan = plans.find((p) => p.fromName === alert.mintName) ?? plans[0];
+                        if (plan) {
+                          const event = await executeMigration(plan);
+                          if (event) {
+                            dispatch({ type: 'ADD_MIGRATION', event });
+                          }
+                        } else {
+                          // Fallback: log the approved migration
+                          dispatch({
+                            type: 'ADD_MIGRATION',
+                            event: {
+                              id: crypto.randomUUID(),
+                              fromMint: alert.mintName,
+                              toMint: 'Best available',
+                              amount: 0,
+                              reason: `Manual approval: trust score ${alert.score.toFixed(0)} — no eligible target found`,
+                              timestamp: new Date().toISOString(),
+                              status: 'failed',
+                            },
+                          });
+                        }
                       }}
                       className="text-[9px] font-mono px-2 py-1 rounded bg-[#3fb950]/20 text-[#3fb950] border border-[#3fb950]/30 hover:bg-[#3fb950]/30 transition-colors"
                     >

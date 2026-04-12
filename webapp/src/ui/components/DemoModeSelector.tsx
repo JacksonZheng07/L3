@@ -13,7 +13,7 @@ const demoModes: {
   {
     mode: 'mock',
     label: 'Mock Data',
-    description: 'Hardcoded simulation data. No real transactions. Best for demos and pitch presentations.',
+    description: 'Live scoring with simulated perturbations. No real transactions. Best for demos and pitch presentations.',
     icon: FlaskConical,
     color: '#a855f7',
     badge: 'RECOMMENDED FOR DEMO',
@@ -126,7 +126,7 @@ export default function DemoModeSelector() {
             Scan to fund testnet wallet (100 sats)
           </div>
           <div className="text-[9px] font-mono text-[#d29922]/60 mt-1">
-            lnbcrt1u1pn...mutinynet
+            Invoice generated on connect
           </div>
         </div>
       )}

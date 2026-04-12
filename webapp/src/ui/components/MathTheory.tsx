@@ -2,10 +2,10 @@ import { useStore } from '../../state/store';
 import { Brain, TrendingDown, BarChart3, ArrowRightLeft } from 'lucide-react';
 
 export default function MathTheory() {
-  const { effectiveScores } = useStore();
+  const { state, effectiveScores } = useStore();
 
-  // Compute portfolio VaR from effective scores
-  const totalExposure = 100000; // mock portfolio in sats
+  // Use real portfolio balance, fallback to sum of known balances or 0
+  const totalExposure = state.totalBalance;
   const portfolioVaR = effectiveScores.reduce((sum, mint) => {
     const exposure = (mint.allocationPct / 100) * totalExposure;
     const mintVaR = exposure * (1 - mint.compositeScore / 100);

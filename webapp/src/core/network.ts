@@ -1,9 +1,13 @@
 /**
  * L³ Network Layer
  * Fetch wrapper with timeout and retry for Cashu mint endpoints and Allium API.
+ *
+ * Allium API docs: https://docs.allium.so/
+ * - In production: calls go through /api/allium serverless proxy (keeps key server-side)
+ * - In dev with VITE_ALLIUM_API_KEY: calls go directly to Allium API
  */
 
-import { ALLIUM_API_KEY, ALLIUM_BASE_URL } from './config';
+import { ALLIUM_API_KEY } from './config';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -45,7 +49,6 @@ async function fetchWithRetry(
     } catch (err) {
       lastError = err;
       if (attempt < retries) {
-        // Exponential back-off: 500ms, 1000ms
         await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
       }
     }
@@ -97,58 +100,86 @@ export async function probeMintKeysets(
 }
 
 // ── Allium API ───────────────────────────────────────────────────────
+//
+// Two modes:
+// 1. Production (deployed to Vercel): calls /api/allium?endpoint=... serverless proxy
+// 2. Dev with API key: calls Allium directly
+//
+// Allium wallet endpoints expect POST with JSON array body: [{chain, address}]
 
-export async function alliumRequest(
+const ALLIUM_DIRECT_BASE = 'https://api.allium.so/api/v1/developer';
+const useProxy = !ALLIUM_API_KEY; // use proxy when no client-side key
+
+async function alliumPost(
   endpoint: string,
-  payload: Record<string, unknown>,
+  body: unknown,
 ): Promise<Record<string, unknown> | null> {
-  if (!ALLIUM_API_KEY) return null;
-
   try {
+    let url: string;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+    if (useProxy) {
+      // Use the Vercel serverless proxy (API key is server-side)
+      url = `/api/allium?endpoint=${encodeURIComponent(endpoint)}`;
+    } else {
+      // Call Allium directly (dev mode with key in env)
+      url = `${ALLIUM_DIRECT_BASE}${endpoint}`;
+      headers['X-API-KEY'] = ALLIUM_API_KEY;
+    }
+
+    console.log(`[Allium] POST ${url}`);
+
     const response = await fetchWithRetry(
-      `${ALLIUM_BASE_URL}${endpoint}`,
-      {
-        method: 'POST',
-        headers: {
-          'X-API-KEY': ALLIUM_API_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      },
+      url,
+      { method: 'POST', headers, body: JSON.stringify(body) },
       2,
       15_000,
     );
 
     if (response.ok) {
-      return (await response.json()) as Record<string, unknown>;
+      const data = (await response.json()) as Record<string, unknown>;
+      console.log(`[Allium] Success: ${endpoint}`);
+      return data;
     }
+
+    const errorText = await response.text().catch(() => 'unknown');
+    console.warn(`[Allium] ${response.status} ${endpoint}: ${errorText}`);
     return null;
-  } catch {
+  } catch (err) {
+    console.warn(`[Allium] Network error on ${endpoint}:`, err);
     return null;
   }
 }
 
+/**
+ * Fetch wallet transactions for an address.
+ * Allium expects: POST /wallet/transactions with body: [{chain, address}]
+ */
 export async function fetchWalletTransactions(
   address: string,
   chain = 'bitcoin',
 ): Promise<Record<string, unknown> | null> {
-  return alliumRequest('/wallet/transactions', { address, chain });
+  return alliumPost('/wallet/transactions', [{ address, chain }]);
 }
 
+/**
+ * Fetch current token balances for an address.
+ * Allium expects: POST /wallet/balances with body: [{chain, address}]
+ */
 export async function fetchWalletBalances(
   address: string,
   chain = 'bitcoin',
 ): Promise<Record<string, unknown> | null> {
-  return alliumRequest('/wallet/latest-token-balances', {
-    addresses: [{ address, chain }],
-  });
+  return alliumPost('/wallet/balances', [{ address, chain }]);
 }
 
+/**
+ * Fetch historical balances for an address.
+ * Allium expects: POST /wallet/balances/history with body: [{chain, address}]
+ */
 export async function fetchHistoricalBalances(
   address: string,
   chain = 'bitcoin',
 ): Promise<Record<string, unknown> | null> {
-  return alliumRequest('/wallet/historical-token-balances', {
-    addresses: [{ address, chain }],
-  });
+  return alliumPost('/wallet/balances/history', [{ address, chain }]);
 }

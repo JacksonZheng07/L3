@@ -5,6 +5,7 @@ import { MINTS, SCORING_INTERVAL_MS } from '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
 import { walletEngine } from '../core/walletEngine';
+import { computeMigrationPlans, executeMigration } from '../core/migrationEngine';
 
 const initialState: AppState = {
   scores: [],
@@ -43,7 +44,8 @@ type Action =
   | { type: 'SET_SIMULATION_SCORES'; scores: MintScore[] | null }
   | { type: 'SET_DEMO_MODE'; mode: DemoMode }
   | { type: 'SET_ENTITY_WALLETS'; wallets: EntityWallet[] }
-  | { type: 'SET_FEDERATIONS'; federations: Federation[] };
+  | { type: 'SET_FEDERATIONS'; federations: Federation[] }
+  | { type: 'SET_TOTAL_BALANCE'; amount: number };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -91,6 +93,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, entityWallets: action.wallets };
     case 'SET_FEDERATIONS':
       return { ...state, federations: action.federations };
+    case 'SET_TOTAL_BALANCE':
+      return { ...state, totalBalance: action.amount };
     default:
       return state;
   }
@@ -113,6 +117,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const cachedKeysets = useRef<Map<string, string[]>>(new Map());
   const scoringRef = useRef(false);
   const prevScoresRef = useRef<Map<string, number>>(new Map());
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const refreshBalances = useCallback(() => {
     const balances = walletEngine.getAllBalances();
@@ -125,87 +131,156 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     scoringRef.current = true;
     dispatch({ type: 'SET_SCORING', isScoring: true });
 
-    const probeResults = new Map<string, ProbeResult>();
-    const probePromises = MINTS.map(async (mint) => {
-      const [info, keysets] = await Promise.all([
-        probeMintInfo(mint.url),
-        probeMintKeysets(mint.url),
-      ]);
-      const result: ProbeResult = { info, keysets };
-      probeResults.set(mint.url, result);
-      dispatch({ type: 'SET_PROBE_RESULT', url: mint.url, result });
-    });
+    try {
+      const probeResults = new Map<string, ProbeResult>();
+      const probePromises = MINTS.map(async (mint) => {
+        const [info, keysets] = await Promise.all([
+          probeMintInfo(mint.url),
+          probeMintKeysets(mint.url),
+        ]);
+        const result: ProbeResult = { info, keysets };
+        probeResults.set(mint.url, result);
+        dispatch({ type: 'SET_PROBE_RESULT', url: mint.url, result });
+      });
 
-    await Promise.allSettled(probePromises);
+      await Promise.allSettled(probePromises);
 
-    const scores = await scoreAllMints(MINTS, probeResults, cachedKeysets.current);
+      const scores = await scoreAllMints(MINTS, probeResults, cachedKeysets.current);
 
-    // Update keyset cache
-    for (const score of scores) {
-      const keysetSignal = score.signals.find(s => s.name === 'keyset_stability');
-      if (keysetSignal?.rawData?.keysets) {
-        cachedKeysets.current.set(score.url, keysetSignal.rawData.keysets as string[]);
+      // Update keyset cache
+      for (const score of scores) {
+        const keysetSignal = score.signals.find(s => s.name === 'keyset_stability');
+        if (keysetSignal?.rawData?.keysets) {
+          cachedKeysets.current.set(score.url, keysetSignal.rawData.keysets as string[]);
+        }
       }
-    }
 
-    // Generate alerts by comparing with previous scores
-    for (const score of scores) {
-      const prevScore = prevScoresRef.current.get(score.url);
-      if (prevScore !== undefined) {
-        const drop = prevScore - score.compositeScore;
-        if (score.grade === 'critical' && drop > 0) {
+      // Generate alerts by comparing with previous scores
+      for (const score of scores) {
+        const prevScore = prevScoresRef.current.get(score.url);
+        if (prevScore !== undefined) {
+          const drop = prevScore - score.compositeScore;
+          if (score.grade === 'critical' && drop > 0) {
+            dispatch({
+              type: 'ADD_ALERT',
+              alert: {
+                id: crypto.randomUUID(),
+                timestamp: new Date().toISOString(),
+                mintUrl: score.url,
+                mintName: score.name,
+                type: 'critical',
+                message: `${score.name} dropped to CRITICAL (${score.compositeScore.toFixed(0)}/100). Funds at risk.`,
+                score: score.compositeScore,
+                previousScore: prevScore,
+                dismissed: false,
+                actionTaken: 'pending',
+              },
+            });
+          } else if (drop >= 10) {
+            dispatch({
+              type: 'ADD_ALERT',
+              alert: {
+                id: crypto.randomUUID(),
+                timestamp: new Date().toISOString(),
+                mintUrl: score.url,
+                mintName: score.name,
+                type: 'score_drop',
+                message: `${score.name} score dropped ${drop.toFixed(0)} points (${prevScore.toFixed(0)} -> ${score.compositeScore.toFixed(0)})`,
+                score: score.compositeScore,
+                previousScore: prevScore,
+                dismissed: false,
+              },
+            });
+          } else if (prevScore < 50 && score.compositeScore >= 75) {
+            dispatch({
+              type: 'ADD_ALERT',
+              alert: {
+                id: crypto.randomUUID(),
+                timestamp: new Date().toISOString(),
+                mintUrl: score.url,
+                mintName: score.name,
+                type: 'recovery',
+                message: `${score.name} recovered to SAFE (${score.compositeScore.toFixed(0)}/100)`,
+                score: score.compositeScore,
+                previousScore: prevScore,
+                dismissed: false,
+              },
+            });
+          }
+        }
+        prevScoresRef.current.set(score.url, score.compositeScore);
+      }
+
+      dispatch({ type: 'SET_SCORES', scores });
+
+      // ── Auto-migration: compute and execute migration plans ──────
+      const currentState = stateRef.current;
+      if (currentState.automationMode === 'auto' && currentState.totalBalance > 0) {
+        const plans = computeMigrationPlans(
+          scores,
+          currentState.balances,
+          currentState.totalBalance,
+        );
+
+        for (const plan of plans) {
+          // Dispatch alert about the migration
           dispatch({
             type: 'ADD_ALERT',
             alert: {
               id: crypto.randomUUID(),
               timestamp: new Date().toISOString(),
-              mintUrl: score.url,
-              mintName: score.name,
-              type: 'critical',
-              message: `${score.name} dropped to CRITICAL (${score.compositeScore.toFixed(0)}/100). Funds at risk.`,
-              score: score.compositeScore,
-              previousScore: prevScore,
+              mintUrl: plan.fromMint,
+              mintName: plan.fromName,
+              type: 'migration_executed',
+              message: `Auto-migrating ${plan.amount.toLocaleString()} sats from ${plan.fromName} to ${plan.toName}: ${plan.reason}`,
+              score: scores.find((s) => s.url === plan.fromMint)?.compositeScore ?? 0,
+              dismissed: false,
+              actionTaken: 'migrated',
+            },
+          });
+
+          // Execute the actual migration
+          const event = await executeMigration(plan);
+          if (event) {
+            dispatch({ type: 'ADD_MIGRATION', event });
+          }
+        }
+
+        // Refresh balances after migrations
+        if (plans.length > 0) {
+          refreshBalances();
+        }
+      } else if (currentState.automationMode === 'alert') {
+        // In alert mode, just suggest migrations
+        const plans = computeMigrationPlans(
+          scores,
+          currentState.balances,
+          currentState.totalBalance,
+        );
+
+        for (const plan of plans) {
+          dispatch({
+            type: 'ADD_ALERT',
+            alert: {
+              id: crypto.randomUUID(),
+              timestamp: new Date().toISOString(),
+              mintUrl: plan.fromMint,
+              mintName: plan.fromName,
+              type: 'migration_suggested',
+              message: `Suggested: move ${plan.amount.toLocaleString()} sats from ${plan.fromName} to ${plan.toName}. ${plan.reason}`,
+              score: scores.find((s) => s.url === plan.fromMint)?.compositeScore ?? 0,
               dismissed: false,
               actionTaken: 'pending',
             },
           });
-        } else if (drop >= 10) {
-          dispatch({
-            type: 'ADD_ALERT',
-            alert: {
-              id: crypto.randomUUID(),
-              timestamp: new Date().toISOString(),
-              mintUrl: score.url,
-              mintName: score.name,
-              type: 'score_drop',
-              message: `${score.name} score dropped ${drop.toFixed(0)} points (${prevScore.toFixed(0)} -> ${score.compositeScore.toFixed(0)})`,
-              score: score.compositeScore,
-              previousScore: prevScore,
-              dismissed: false,
-            },
-          });
-        } else if (prevScore < 50 && score.compositeScore >= 75) {
-          dispatch({
-            type: 'ADD_ALERT',
-            alert: {
-              id: crypto.randomUUID(),
-              timestamp: new Date().toISOString(),
-              mintUrl: score.url,
-              mintName: score.name,
-              type: 'recovery',
-              message: `${score.name} recovered to SAFE (${score.compositeScore.toFixed(0)}/100)`,
-              score: score.compositeScore,
-              previousScore: prevScore,
-              dismissed: false,
-            },
-          });
         }
       }
-      prevScoresRef.current.set(score.url, score.compositeScore);
+    } catch (err) {
+      console.error('[L3] Scoring failed:', err);
+      dispatch({ type: 'SET_SCORING', isScoring: false });
+    } finally {
+      scoringRef.current = false;
     }
-
-    dispatch({ type: 'SET_SCORES', scores });
-    scoringRef.current = false;
   }, []);
 
   const setView = useCallback((view: AppView) => {

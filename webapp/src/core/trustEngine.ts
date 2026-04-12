@@ -602,6 +602,89 @@ export function scoreProtocolVersion(
 // ║  COMPOSITE SCORING                                              ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
+/**
+ * Normalize raw Allium API responses into the format the scoring functions expect.
+ *
+ * Allium returns: { items: [...] }
+ * - /wallet/transactions items have: labels, asset_transfers, block_timestamp, etc.
+ * - /wallet/balances items have: raw_balance, decimals, chain, address
+ * - /wallet/balances/history items have: raw_balance, block_timestamp, etc.
+ *
+ * The scoring functions expect a flat dict with:
+ *   txData: { labels, asset_transfers: [...], activities: [...] }
+ *   balanceData: { data: [{ symbol, amount, usd_value }] }
+ *   historicalData: { data: [{ block_timestamp, amount }] }
+ */
+function normalizeAlliumTxData(raw: Dict | null): Dict | null {
+  if (!raw) return null;
+  const items = Array.isArray(raw.items) ? (raw.items as Dict[]) : [];
+  if (items.length === 0) return null;
+
+  // Aggregate all asset_transfers and labels across all tx items
+  const allTransfers: Dict[] = [];
+  const allLabels = new Set<string>();
+
+  for (const item of items) {
+    // Labels from each transaction
+    if (Array.isArray(item.labels)) {
+      for (const l of item.labels as string[]) allLabels.add(l);
+    }
+    // Asset transfers
+    if (Array.isArray(item.asset_transfers)) {
+      for (const t of item.asset_transfers as Dict[]) {
+        allTransfers.push({
+          ...t,
+          block_timestamp: t.block_timestamp ?? item.block_timestamp,
+          from_address: t.from_address,
+          to_address: t.to_address,
+        });
+      }
+    }
+  }
+
+  return {
+    labels: [...allLabels],
+    asset_transfers: allTransfers,
+    activities: items.filter((i) => i.type),
+  };
+}
+
+function normalizeAlliumBalanceData(raw: Dict | null): Dict | null {
+  if (!raw) return null;
+  const items = Array.isArray(raw.items) ? (raw.items as Dict[]) : [];
+  if (items.length === 0) return null;
+
+  const data = items.map((item) => {
+    const decimals = Number(item.decimals ?? 8);
+    const rawBalance = Number(item.raw_balance ?? 0);
+    const amount = rawBalance / Math.pow(10, decimals);
+    return {
+      symbol: String((item.asset as Dict)?.symbol ?? item.symbol ?? 'BTC').toUpperCase(),
+      amount,
+      usd_value: String(item.usd_value ?? 0),
+    };
+  });
+
+  return { data };
+}
+
+function normalizeAlliumHistoricalData(raw: Dict | null): Dict | null {
+  if (!raw) return null;
+  const items = Array.isArray(raw.items) ? (raw.items as Dict[]) : [];
+  if (items.length === 0) return null;
+
+  const data = items.map((item) => {
+    const decimals = Number(item.decimals ?? 8);
+    const rawBalance = Number(item.raw_balance ?? 0);
+    return {
+      block_timestamp: item.block_timestamp,
+      amount: rawBalance / Math.pow(10, decimals),
+    };
+  });
+
+  return { data };
+}
+
 export async function scoreMint(
   mintConfig: MintConfig,
   probeResult: ProbeResult,
@@ -610,18 +693,28 @@ export async function scoreMint(
   const { url, name, operatorAddresses } = mintConfig;
   const isAnonymous = operatorAddresses.length === 0;
 
-  // Allium data
+  // Allium data — fetch raw, then normalize into scoring format
   let txData: Dict | null = null;
   let balanceData: Dict | null = null;
   let historicalData: Dict | null = null;
 
   if (!isAnonymous) {
     const primary = operatorAddresses[0];
-    [txData, balanceData, historicalData] = await Promise.all([
+    const [rawTx, rawBalance, rawHistory] = await Promise.all([
       fetchWalletTransactions(primary),
       fetchWalletBalances(primary),
       fetchHistoricalBalances(primary),
     ]);
+
+    txData = normalizeAlliumTxData(rawTx);
+    balanceData = normalizeAlliumBalanceData(rawBalance);
+    historicalData = normalizeAlliumHistoricalData(rawHistory);
+
+    console.log(`[TrustEngine] Allium data for ${name}:`, {
+      txItems: rawTx ? (rawTx.items as unknown[])?.length ?? 0 : 'null',
+      balanceItems: rawBalance ? (rawBalance.items as unknown[])?.length ?? 0 : 'null',
+      historyItems: rawHistory ? (rawHistory.items as unknown[])?.length ?? 0 : 'null',
+    });
   }
 
   const signals: SignalResult[] = [
@@ -730,7 +823,7 @@ export async function scoreAllMints(
   probeResults: Map<string, ProbeResult>,
   cachedKeysets: Map<string, string[]>,
 ): Promise<MintScore[]> {
-  const results = await Promise.all(
+  const settled = await Promise.allSettled(
     mints.map((m) => {
       const probe = probeResults.get(m.url) ?? {
         info: { success: false, latencyMs: 99999, data: null },
@@ -740,6 +833,16 @@ export async function scoreAllMints(
       return scoreMint(m, probe, cached);
     }),
   );
+
+  const results: MintScore[] = [];
+  for (let i = 0; i < settled.length; i++) {
+    const outcome = settled[i];
+    if (outcome.status === 'fulfilled') {
+      results.push(outcome.value);
+    } else {
+      console.warn(`[TrustEngine] Failed to score ${mints[i].name}:`, outcome.reason);
+    }
+  }
 
   return computeAllocation(results);
 }

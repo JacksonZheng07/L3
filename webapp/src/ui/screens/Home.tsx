@@ -10,6 +10,7 @@ import SimulationPanel from '../components/SimulationPanel';
 import AutomationControl from '../components/AutomationControl';
 import AlertPanel from '../components/AlertPanel';
 import DemoModeSelector from '../components/DemoModeSelector';
+import WalletInput from '../components/WalletInput';
 import FedimintArchitecture from '../components/FedimintArchitecture';
 import MathTheory from '../components/MathTheory';
 import { RefreshCw, Activity, Radio, FlaskConical, Building2, ChevronDown, ChevronUp, BarChart3, Shield, Brain, Layers } from 'lucide-react';
@@ -177,12 +178,13 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Demo Mode + Simulation Panel */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1">
+        {/* Wallet + Demo Mode + Simulation Panel */}
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+          <div className="lg:col-span-1 space-y-6">
+            <WalletInput />
             <DemoModeSelector />
           </div>
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-3">
             <SimulationPanel />
           </div>
         </div>
@@ -316,7 +318,7 @@ export default function Home() {
             </div>
             <div className="flex items-center justify-center gap-2 text-[9px] font-mono">
               <span className="px-2 py-1 rounded bg-[#3fb950]/20 text-[#3fb950] border border-[#3fb950]/30">
-                Phase 1: Cashu + Mock Allium
+                Phase 1: Cashu + Live Allium
               </span>
               <span className="text-[#8b949e]">{'>'}</span>
               <span className="px-2 py-1 rounded bg-[#58a6ff]/20 text-[#58a6ff] border border-[#58a6ff]/30">

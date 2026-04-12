@@ -3,12 +3,27 @@ import type { MintConfig } from '../state/types';
 export const ALLIUM_API_KEY = import.meta.env.VITE_ALLIUM_API_KEY || '';
 export const ALLIUM_BASE_URL = 'https://api.allium.so/api/v1/developer';
 
+// Log API key status on load (redacted)
+if (ALLIUM_API_KEY) {
+  console.log(`[L3] Allium API key loaded (${ALLIUM_API_KEY.slice(0, 8)}...)`);
+} else {
+  console.warn('[L3] No Allium API key set. Set VITE_ALLIUM_API_KEY in .env');
+}
+
+// ── Mint Registry ─────────────────────────────────────────────────
+// operatorAddresses: Bitcoin addresses associated with the mint operator.
+// When populated, Allium API is queried for on-chain intelligence.
+// Empty = anonymous operator (Allium signals score 0).
+
 export const MINTS: MintConfig[] = [
-  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: [] },
+  // Mints with known operator addresses (Allium will query these)
+  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'] },
+  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: ['bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf'] },
   { url: 'https://mint.lnbits.com/cashu/api/v1/AptDNABNBXv8gpuywhx6NV', name: 'LNbits Cashu', operatorAddresses: [] },
+
+  // Anonymous mints (no on-chain identity — capped at ~40 score max)
   { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: [] },
   { url: 'https://8333.space:3338',                  name: '8333.space',         operatorAddresses: [] },
-  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: [] },
   { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: [] },
   { url: 'https://mint.enuts.cash',                  name: 'eNuts',              operatorAddresses: [] },
   { url: 'https://legend.lnbits.com/cashu/api/v1/4gr9Xcmz3XEkUNwiBiQGoC', name: 'Legend LNbits', operatorAddresses: [] },
@@ -45,4 +60,7 @@ export const LATENCY_EXCELLENT = 500;
 export const LATENCY_ACCEPTABLE = 2000;
 export const KNOWN_VERSION_PREFIX = '0.15';
 export const MAX_ALLOCATION = 0.40;
-export const SCORING_INTERVAL_MS = 30_000; // Re-score every 30s
+export const MIGRATION_THRESHOLD = 50;    // score below this → evacuate
+export const MIGRATION_HYSTERESIS = 10;   // must score >= threshold + hysteresis to receive migrated funds
+export const REBALANCE_DRIFT_PCT = 10;    // only rebalance if allocation drifts >10% from target
+export const SCORING_INTERVAL_MS = 30_000;
