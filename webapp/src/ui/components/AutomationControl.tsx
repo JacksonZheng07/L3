@@ -1,28 +1,42 @@
 import { useStore } from '../../state/store';
 import type { AutomationMode } from '../../state/types';
-import { Bot, Bell, Hand } from 'lucide-react';
+import { Monitor, Webhook, Bot } from 'lucide-react';
 
-const modes: { mode: AutomationMode; label: string; description: string; icon: typeof Bot; color: string }[] = [
+const modes: {
+  mode: AutomationMode;
+  label: string;
+  layerName: string;
+  description: string;
+  whoItsFor: string;
+  icon: typeof Bot;
+  color: string;
+}[] = [
   {
-    mode: 'auto',
-    label: 'Auto-Migrate',
-    description: 'Automatically move funds when a mint drops below critical threshold. No human intervention needed.',
-    icon: Bot,
-    color: '#3fb950',
+    mode: 'manual',
+    label: 'Dashboard Only',
+    layerName: 'Layer 1',
+    description: 'Passive monitoring. Runs health checks, computes trust scores, displays them. No automated action.',
+    whoItsFor: 'Companies with compliance requirements around manual approval of fund movements.',
+    icon: Monitor,
+    color: '#58a6ff',
   },
   {
     mode: 'alert',
-    label: 'Alert Only',
-    description: 'Receive alerts when trust scores change. Migration suggestions provided but require manual approval.',
-    icon: Bell,
+    label: 'Webhook / Alert',
+    layerName: 'Layer 2',
+    description: 'When a score crosses a threshold, fires a webhook to Slack, PagerDuty, or custom endpoint. Team decides action.',
+    whoItsFor: 'Treasury teams that want L3 integrated into existing ops workflow.',
+    icon: Webhook,
     color: '#d29922',
   },
   {
-    mode: 'manual',
-    label: 'Manual',
-    description: 'Full manual control. View scores and allocations, decide when and where to move funds yourself.',
-    icon: Hand,
-    color: '#58a6ff',
+    mode: 'auto',
+    label: 'Full Automation',
+    layerName: 'Layer 3',
+    description: 'When score drops below threshold, L3 autonomously migrates funds to the healthiest mint. Logs everything for audit.',
+    whoItsFor: 'Companies that want hands-off custody management with policy-based automation.',
+    icon: Bot,
+    color: '#3fb950',
   },
 ];
 
@@ -31,15 +45,15 @@ export default function AutomationControl() {
 
   return (
     <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-4">
-      <h3 className="text-sm font-mono font-semibold text-[#c9d1d9] mb-3">
-        Trust Response Mode
+      <h3 className="text-sm font-mono font-semibold text-[#c9d1d9] mb-1">
+        Layers of Trust — Choose Your Level
       </h3>
       <p className="text-[10px] font-mono text-[#8b949e] mb-4">
-        Choose how L3 responds when a mint's trust score crosses risk thresholds.
+        Your treasury policy determines the operational mode. L3 adapts to your risk tolerance.
       </p>
 
       <div className="grid grid-cols-3 gap-2">
-        {modes.map(({ mode, label, description, icon: Icon, color }) => {
+        {modes.map(({ mode, label, layerName, description, whoItsFor, icon: Icon, color }) => {
           const isActive = state.automationMode === mode;
           return (
             <button
@@ -47,7 +61,7 @@ export default function AutomationControl() {
               onClick={() => dispatch({ type: 'SET_AUTOMATION_MODE', mode })}
               className={`text-left rounded-lg border p-3 transition-all duration-200 ${
                 isActive
-                  ? 'border-opacity-50 bg-opacity-10 shadow-lg'
+                  ? 'shadow-lg'
                   : 'border-[#30363d] bg-[#0d1117] hover:border-[#58a6ff]/30'
               }`}
               style={isActive ? {
@@ -56,6 +70,18 @@ export default function AutomationControl() {
                 boxShadow: `0 0 15px ${color}15`,
               } : undefined}
             >
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="text-[8px] font-mono font-bold px-1.5 py-0.5 rounded"
+                  style={{
+                    color,
+                    backgroundColor: `${color}20`,
+                    border: `1px solid ${color}30`,
+                  }}
+                >
+                  {layerName}
+                </span>
+              </div>
               <div className="flex items-center gap-2 mb-2">
                 <Icon size={14} style={{ color: isActive ? color : '#8b949e' }} />
                 <span
@@ -65,8 +91,11 @@ export default function AutomationControl() {
                   {label}
                 </span>
               </div>
-              <p className="text-[9px] font-mono text-[#8b949e] leading-relaxed">
+              <p className="text-[9px] font-mono text-[#8b949e] leading-relaxed mb-2">
                 {description}
+              </p>
+              <p className="text-[8px] font-mono text-[#8b949e]/60 leading-relaxed italic">
+                {whoItsFor}
               </p>
               {isActive && (
                 <div className="mt-2 text-[9px] font-mono font-semibold" style={{ color }}>
@@ -77,6 +106,27 @@ export default function AutomationControl() {
           );
         })}
       </div>
+
+      {/* Webhook example payload for Layer 2 */}
+      {state.automationMode === 'alert' && (
+        <div className="mt-3 rounded-lg border border-[#d29922]/20 bg-[#0d1117] p-3">
+          <div className="text-[9px] font-mono text-[#d29922] font-semibold mb-2">
+            Example Webhook Payload
+          </div>
+          <pre className="text-[9px] font-mono text-[#8b949e] leading-relaxed overflow-x-auto">
+{`{
+  "event": "mint_score_drop",
+  "mint_url": "https://mint-b.example.com",
+  "previous_score": 72,
+  "current_score": 43,
+  "threshold": 50,
+  "red_flags": ["keyset_changed", "consecutive_failures_3"],
+  "recommended_action": "migrate_to_best_mint",
+  "timestamp": "${new Date().toISOString()}"
+}`}
+          </pre>
+        </div>
+      )}
     </div>
   );
 }

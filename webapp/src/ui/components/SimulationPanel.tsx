@@ -1,9 +1,9 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useStore } from '../../state/store';
-import type { MintScore, SignalResult, MigrationEvent } from '../../state/types';
+import type { MintScore, SignalResult } from '../../state/types';
 import { computeAllocation } from '../../core/trustEngine';
 import { MINTS, WEIGHTS } from '../../core/config';
-import { FlaskConical, Play, RotateCcw, AlertTriangle, TrendingDown, Zap, Shield } from 'lucide-react';
+import { FlaskConical, Play, RotateCcw, AlertTriangle, TrendingDown, Zap, Shield, Timer, Users } from 'lucide-react';
 
 // ── Mock signal generator ──────────────────────────────────────
 
@@ -51,14 +51,14 @@ function generateMockScore(
 
   const signals: SignalResult[] = [
     mockSignal('operator_identity', opId, 'allium', opId > 0.6 ? 'Known entity with established history' : opId > 0.3 ? 'Partially identified operator' : 'Anonymous operator'),
-    mockSignal('reserve_behavior', rb, 'allium', rb > 0.7 ? 'Reserves stable and growing' : rb > 0.4 ? 'Minor reserve fluctuations' : 'Significant reserve decline detected'),
-    mockSignal('transaction_patterns', tp, 'allium', tp > 0.7 ? 'Healthy diverse transaction patterns' : tp > 0.4 ? 'Moderate activity' : 'Suspicious circular patterns detected'),
+    mockSignal('reserve_behavior', rb, 'allium', rb > 0.7 ? 'Reserves stable and growing' : rb > 0.4 ? 'Minor reserve fluctuations' : 'Significant reserve decline detected — ALERT'),
+    mockSignal('transaction_patterns', tp, 'allium', tp > 0.7 ? 'Healthy diverse transaction patterns' : tp > 0.4 ? 'Moderate activity' : 'Suspicious circular patterns — possible wash trading'),
     mockSignal('counterparty_network', cp, 'allium', cp > 0.5 ? 'Legitimate DeFi counterparties' : 'Limited counterparty network'),
-    mockSignal('availability', av, 'direct', av > 0.5 ? 'Mint online and responding' : 'MINT UNREACHABLE'),
-    mockSignal('latency', lat, 'direct', lat > 0.7 ? `Response: ${Math.round(200 + (1 - lat) * 1800)}ms (excellent)` : `Response: ${Math.round(500 + (1 - lat) * 3000)}ms (slow)`),
-    mockSignal('keyset_stability', ks, 'direct', ks > 0.5 ? 'Keysets stable' : 'KEYSET CHANGED — possible token invalidation'),
+    mockSignal('availability', av, 'direct', av > 0.5 ? 'Mint online and responding' : 'MINT UNREACHABLE — all operations will fail'),
+    mockSignal('latency', lat, 'direct', lat > 0.7 ? `Response: ${Math.round(200 + (1 - lat) * 1800)}ms (excellent)` : `Response: ${Math.round(500 + (1 - lat) * 3000)}ms (degraded)`),
+    mockSignal('keyset_stability', ks, 'direct', ks > 0.5 ? 'Keysets stable — no changes detected' : 'KEYSET CHANGED — possible token invalidation attempt'),
     mockSignal('tx_success_rate', tx, 'direct', `Success rate: ${(tx * 100).toFixed(1)}%`),
-    mockSignal('protocol_version', ver, 'direct', ver > 0.7 ? 'Current stable release' : 'Outdated version'),
+    mockSignal('protocol_version', ver, 'direct', ver > 0.7 ? 'Current stable release (0.15.x)' : 'Outdated version (0.14.x)'),
   ];
 
   const compositeScore = Math.round(signals.reduce((s, r) => s + r.contribution, 0) * 1000) / 10;
@@ -80,6 +80,41 @@ function generateMockScore(
   };
 }
 
+// ── Fedimint mock score (higher base trust) ──────────────────
+
+function generateFedimintMockScore(): MintScore {
+  const signals: SignalResult[] = [
+    mockSignal('operator_identity', 0.95, 'allium', 'Federated — 5 known guardians across 5 jurisdictions'),
+    mockSignal('reserve_behavior', 0.90, 'allium', 'Multi-sig reserves verified on-chain. No single withdrawal authority.'),
+    mockSignal('transaction_patterns', 0.85, 'allium', 'Diverse organic activity across federation members'),
+    mockSignal('counterparty_network', 0.80, 'allium', 'Guardians have established entity labels'),
+    mockSignal('availability', 1.0, 'direct', 'Federation online (3-of-5 guardians responding)'),
+    mockSignal('latency', 0.9, 'direct', 'Response: 280ms (excellent — federation consensus overhead minimal)'),
+    mockSignal('keyset_stability', 1.0, 'direct', 'Federation keysets stable (threshold rotation requires 3-of-5)'),
+    mockSignal('tx_success_rate', 0.98, 'direct', 'Success rate: 99.2% (federation redundancy)'),
+    mockSignal('protocol_version', 1.0, 'direct', 'Current Fedimint stable release'),
+  ];
+
+  // +15 base trust bonus for federation architecture
+  const baseComposite = Math.round(signals.reduce((s, r) => s + r.contribution, 0) * 1000) / 10;
+  const compositeScore = Math.min(100, baseComposite + 15);
+
+  return {
+    url: 'https://fed-alpha.example.com',
+    name: 'Alpine Federation (Fedimint)',
+    isAnonymous: false,
+    signals,
+    compositeScore,
+    grade: 'safe',
+    allocationPct: 0,
+    scoredAt: new Date().toISOString(),
+    isOnline: true,
+    latencyMs: 280,
+    version: 'fedimint-0.4.2',
+    keysetCount: 5,
+  };
+}
+
 // ── Preset Scenarios ───────────────────────────────────────────
 
 interface Scenario {
@@ -95,11 +130,11 @@ const SCENARIOS: Scenario[] = [
   {
     id: 'healthy',
     name: 'All Mints Healthy',
-    description: 'Baseline: all mints score 70-95. Balanced allocation across reliable operators.',
+    description: 'Baseline: all mints score 70-95. Balanced allocation across reliable operators. Includes a Fedimint federation with higher base trust.',
     icon: Shield,
     color: '#3fb950',
     generate: () => {
-      const scores = MINTS.slice(0, 8).map(m =>
+      const scores = MINTS.slice(0, 7).map(m =>
         generateMockScore(m.url, m.name, {
           availability: 1.0,
           latency: 0.7 + Math.random() * 0.3,
@@ -112,19 +147,19 @@ const SCENARIOS: Scenario[] = [
           counterparty: 0.4 + Math.random() * 0.5,
         })
       );
+      scores.push(generateFedimintMockScore());
       return computeAllocation(scores);
     },
   },
   {
     id: 'single_failure',
     name: 'Single Mint Failure',
-    description: 'One mint goes offline. Watch L3 detect it, drop its score to critical, reallocate funds to healthy mints, and trigger migration.',
+    description: 'One mint goes offline. L3 detects it, drops its score to critical, reallocates funds to healthy mints, and triggers migration.',
     icon: AlertTriangle,
     color: '#f85149',
     generate: () => {
-      const scores = MINTS.slice(0, 8).map((m, i) => {
+      const scores = MINTS.slice(0, 7).map((m, i) => {
         if (i === 2) {
-          // This mint goes critical
           return generateMockScore(m.url, m.name, {
             availability: 0.0,
             latency: 0.0,
@@ -149,28 +184,28 @@ const SCENARIOS: Scenario[] = [
           counterparty: 0.3 + Math.random() * 0.5,
         });
       });
+      scores.push(generateFedimintMockScore());
       return computeAllocation(scores);
     },
   },
   {
     id: 'reserve_drain',
     name: 'Reserve Drain (Rug Pull)',
-    description: 'Allium detects a -60% reserve decline and suspicious circular transactions on a popular mint. L3 drops it to critical before users notice.',
+    description: 'Allium detects -60% reserve decline + wash trading on a popular mint. L3 drops it to critical before users notice. Still online — only on-chain intel catches it.',
     icon: TrendingDown,
     color: '#f85149',
     generate: () => {
-      const scores = MINTS.slice(0, 8).map((m, i) => {
+      const scores = MINTS.slice(0, 7).map((m, i) => {
         if (i === 0) {
-          // Popular mint being drained
           return generateMockScore(m.url, m.name, {
-            availability: 1.0,  // Still online — looks fine on surface
+            availability: 1.0,
             latency: 0.8,
             keysetStable: 1.0,
             txSuccess: 0.85,
             version: 1.0,
-            operatorId: 0.2,       // Anonymous
-            reserveBehavior: 0.05, // Allium catches the drain!
-            txPatterns: 0.1,       // Circular wash trading
+            operatorId: 0.2,
+            reserveBehavior: 0.05,
+            txPatterns: 0.1,
             counterparty: 0.1,
           });
         }
@@ -186,19 +221,19 @@ const SCENARIOS: Scenario[] = [
           counterparty: 0.3 + Math.random() * 0.5,
         });
       });
+      scores.push(generateFedimintMockScore());
       return computeAllocation(scores);
     },
   },
   {
     id: 'cascade',
     name: 'Cascade Failure',
-    description: 'Multiple mints degrade simultaneously. L3 concentrates allocation onto the few remaining safe mints (capped at 40% each for diversification).',
+    description: 'Multiple mints degrade simultaneously. L3 concentrates allocation onto remaining safe mints (capped at 40% for diversification). Federation absorbs overflow.',
     icon: Zap,
     color: '#d29922',
     generate: () => {
-      const scores = MINTS.slice(0, 8).map((m, i) => {
+      const scores = MINTS.slice(0, 7).map((m, i) => {
         if (i < 4) {
-          // First 4 mints degrade
           return generateMockScore(m.url, m.name, {
             availability: Math.random() > 0.5 ? 0.0 : 1.0,
             latency: Math.random() * 0.3,
@@ -211,7 +246,6 @@ const SCENARIOS: Scenario[] = [
             counterparty: Math.random() * 0.2,
           });
         }
-        // Remaining 4 stay healthy
         return generateMockScore(m.url, m.name, {
           availability: 1.0,
           latency: 0.8 + Math.random() * 0.2,
@@ -224,43 +258,33 @@ const SCENARIOS: Scenario[] = [
           counterparty: 0.5 + Math.random() * 0.4,
         });
       });
+      scores.push(generateFedimintMockScore());
       return computeAllocation(scores);
     },
   },
   {
-    id: 'progressive_degradation',
-    name: 'Progressive Degradation',
-    description: 'A mint slowly loses reliability over time. Allium data shows declining reserves while direct probes still show it online — early warning system.',
-    icon: TrendingDown,
-    color: '#d29922',
+    id: 'fedimint_advantage',
+    name: 'Fedimint vs Cashu',
+    description: 'Compare single-operator Cashu mints with a federated Fedimint. Shows the structural trust bonus (+15) from multi-guardian BFT consensus.',
+    icon: Users,
+    color: '#3fb950',
     generate: () => {
-      const scores = MINTS.slice(0, 8).map((m, i) => {
-        if (i === 1) {
-          // Slowly degrading mint — online but Allium catches problems
-          return generateMockScore(m.url, m.name, {
-            availability: 1.0,    // Still online
-            latency: 0.6,         // Getting slower
-            keysetStable: 1.0,    // Keys stable
-            txSuccess: 0.8,       // Some failures starting
-            version: 0.5,         // Outdated
-            operatorId: 0.3,      // Limited identity
-            reserveBehavior: 0.25, // Reserves declining!
-            txPatterns: 0.35,     // Activity dropping
-            counterparty: 0.2,
-          });
-        }
-        return generateMockScore(m.url, m.name, {
-          availability: 1.0,
-          latency: 0.7 + Math.random() * 0.3,
-          keysetStable: 1.0,
-          txSuccess: 0.95 + Math.random() * 0.05,
-          version: 1.0,
-          operatorId: 0.5 + Math.random() * 0.5,
-          reserveBehavior: 0.6 + Math.random() * 0.4,
-          txPatterns: 0.6 + Math.random() * 0.4,
-          counterparty: 0.4 + Math.random() * 0.5,
-        });
-      });
+      // 3 Cashu mints with varying quality + 1 Fedimint
+      const scores = [
+        generateMockScore(MINTS[0].url, 'Cashu Mint A (Good)', {
+          availability: 1.0, latency: 0.9, keysetStable: 1.0, txSuccess: 0.98,
+          version: 1.0, operatorId: 0.7, reserveBehavior: 0.8, txPatterns: 0.75, counterparty: 0.6,
+        }),
+        generateMockScore(MINTS[1].url, 'Cashu Mint B (Average)', {
+          availability: 1.0, latency: 0.6, keysetStable: 1.0, txSuccess: 0.92,
+          version: 0.5, operatorId: 0.4, reserveBehavior: 0.5, txPatterns: 0.5, counterparty: 0.3,
+        }),
+        generateMockScore(MINTS[2].url, 'Cashu Mint C (Weak)', {
+          availability: 1.0, latency: 0.4, keysetStable: 1.0, txSuccess: 0.85,
+          version: 0.5, operatorId: 0.1, reserveBehavior: 0.3, txPatterns: 0.3, counterparty: 0.1,
+        }),
+        generateFedimintMockScore(),
+      ];
       return computeAllocation(scores);
     },
   },
@@ -271,18 +295,24 @@ const SCENARIOS: Scenario[] = [
 export default function SimulationPanel() {
   const { state, dispatch, effectiveScores } = useStore();
   const [activeScenario, setActiveScenario] = useState<string | null>(null);
-  const [isAnimating, setIsAnimating] = useState(false);
+  const [degradationStep, setDegradationStep] = useState(0);
+  const degradationTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const runScenario = useCallback((scenario: Scenario) => {
-    setIsAnimating(true);
+    // Stop any progressive degradation in progress
+    if (degradationTimer.current) {
+      clearTimeout(degradationTimer.current);
+      degradationTimer.current = null;
+    }
+    setDegradationStep(0);
+
     setActiveScenario(scenario.id);
     dispatch({ type: 'SET_SIMULATION_ACTIVE', active: true });
 
-    // Generate scores
     const scores = scenario.generate();
     dispatch({ type: 'SET_SIMULATION_SCORES', scores });
 
-    // Generate alerts based on scenario
+    // Generate alerts
     const criticalMints = scores.filter(s => s.grade === 'critical');
     for (const mint of criticalMints) {
       dispatch({
@@ -303,7 +333,6 @@ export default function SimulationPanel() {
         },
       });
 
-      // If auto mode, simulate migration
       if (state.automationMode === 'auto') {
         const safeMints = scores.filter(s => s.grade === 'safe');
         if (safeMints.length > 0) {
@@ -339,7 +368,6 @@ export default function SimulationPanel() {
       }
     }
 
-    // If alert mode, suggest migrations
     if (state.automationMode === 'alert' && criticalMints.length > 0) {
       const safeMints = scores.filter(s => s.grade === 'safe');
       if (safeMints.length > 0) {
@@ -361,10 +389,102 @@ export default function SimulationPanel() {
       }
     }
 
-    setTimeout(() => setIsAnimating(false), 500);
+  }, [dispatch, state.automationMode]);
+
+  // ── Progressive Degradation Simulation ───────────────────────
+  const DEGRADATION_STEPS = [
+    { label: 'Step 1: Latency spike', overrides: { latency: 0.3, txSuccess: 0.90 } },
+    { label: 'Step 2: Health check failures', overrides: { latency: 0.1, txSuccess: 0.75, availability: 0.5 } },
+    { label: 'Step 3: Reserve drain detected', overrides: { latency: 0.1, txSuccess: 0.6, availability: 0.5, reserveBehavior: 0.15, txPatterns: 0.2 } },
+    { label: 'Step 4: Keyset changed!', overrides: { latency: 0.0, txSuccess: 0.4, availability: 0.0, reserveBehavior: 0.05, txPatterns: 0.1, keysetStable: 0.0 } },
+  ];
+
+  const runProgressiveDegradation = useCallback(() => {
+    setActiveScenario('progressive');
+    dispatch({ type: 'SET_SIMULATION_ACTIVE', active: true });
+    setDegradationStep(0);
+
+    const runStep = (step: number) => {
+      if (step >= DEGRADATION_STEPS.length) return;
+
+      setDegradationStep(step + 1);
+
+      const healthyOverrides = {
+        availability: 1.0, latency: 0.8, keysetStable: 1.0, txSuccess: 0.96,
+        version: 1.0, operatorId: 0.6, reserveBehavior: 0.7, txPatterns: 0.7, counterparty: 0.5,
+      };
+
+      const degradedOverrides = {
+        ...healthyOverrides,
+        operatorId: 0.3,
+        counterparty: 0.2,
+        version: 0.5,
+        ...DEGRADATION_STEPS[step].overrides,
+      };
+
+      const scores = [
+        generateMockScore(MINTS[0].url, 'Mint A (Stable)', healthyOverrides),
+        generateMockScore(MINTS[1].url, 'Mint B (DEGRADING)', degradedOverrides),
+        generateMockScore(MINTS[2].url, 'Mint C (Stable)', healthyOverrides),
+        generateFedimintMockScore(),
+      ];
+
+      const allocated = computeAllocation(scores);
+      dispatch({ type: 'SET_SIMULATION_SCORES', scores: allocated });
+
+      // Alert on the degrading mint
+      const degradingMint = allocated.find(s => s.name === 'Mint B (DEGRADING)')!;
+      dispatch({
+        type: 'ADD_ALERT',
+        alert: {
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          mintUrl: degradingMint.url,
+          mintName: degradingMint.name,
+          type: degradingMint.grade === 'critical' ? 'critical' : 'score_drop',
+          message: `[SIM] ${DEGRADATION_STEPS[step].label} — Score: ${degradingMint.compositeScore.toFixed(0)}/100`,
+          score: degradingMint.compositeScore,
+          previousScore: step > 0 ? 78 - step * 15 : 78,
+          dismissed: false,
+          actionTaken: degradingMint.grade === 'critical' && state.automationMode === 'auto' ? 'migrated' : 'pending',
+        },
+      });
+
+      // If critical and auto mode, trigger migration
+      if (degradingMint.grade === 'critical' && state.automationMode === 'auto') {
+        const safeMints = allocated.filter(s => s.grade === 'safe');
+        if (safeMints.length > 0) {
+          const target = safeMints.sort((a, b) => b.compositeScore - a.compositeScore)[0];
+          dispatch({
+            type: 'ADD_MIGRATION',
+            event: {
+              id: crypto.randomUUID(),
+              fromMint: degradingMint.name,
+              toMint: target.name,
+              amount: Math.floor(2000 + Math.random() * 3000),
+              reason: `Progressive degradation: ${DEGRADATION_STEPS[step].label}`,
+              timestamp: new Date().toISOString(),
+              status: 'completed',
+            },
+          });
+        }
+      }
+
+      // Schedule next step
+      if (step < DEGRADATION_STEPS.length - 1) {
+        degradationTimer.current = setTimeout(() => runStep(step + 1), 3000);
+      }
+    };
+
+    runStep(0);
   }, [dispatch, state.automationMode]);
 
   const resetSimulation = useCallback(() => {
+    if (degradationTimer.current) {
+      clearTimeout(degradationTimer.current);
+      degradationTimer.current = null;
+    }
+    setDegradationStep(0);
     dispatch({ type: 'SET_SIMULATION_ACTIVE', active: false });
     dispatch({ type: 'SET_SIMULATION_SCORES', scores: null });
     setActiveScenario(null);
@@ -396,9 +516,74 @@ export default function SimulationPanel() {
       </div>
 
       <p className="text-[11px] font-mono text-[#8b949e] mb-4 leading-relaxed">
-        Run pre-built scenarios with mock data to demonstrate L3's trust scoring algorithm,
-        automated migration, and risk detection. All data below is simulated.
+        Run pre-built scenarios with hardcoded mock data to prove L3's trust scoring algorithm works.
+        All data is simulated — no real transactions.
       </p>
+
+      {/* Progressive Degradation — Highlighted */}
+      <div className="mb-4">
+        <button
+          onClick={runProgressiveDegradation}
+          className={`w-full text-left rounded-lg border-2 p-4 transition-all duration-200 ${
+            activeScenario === 'progressive'
+              ? 'border-[#f85149]/50 bg-[#f85149]/10 shadow-[0_0_25px_rgba(248,81,73,0.15)]'
+              : 'border-[#f85149]/30 border-dashed bg-[#f85149]/[0.03] hover:border-[#f85149]/50 hover:bg-[#f85149]/5'
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Timer size={16} className="text-[#f85149]" />
+            <span className="text-sm font-mono font-bold text-[#f85149]">
+              Simulate Progressive Degradation
+            </span>
+            <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-[#f85149]/20 text-[#f85149] border border-[#f85149]/30">
+              KEY DEMO
+            </span>
+          </div>
+          <p className="text-[10px] font-mono text-[#8b949e] leading-relaxed mb-2">
+            Watch a mint's safety rating fall in real-time over 4 steps: latency spike, health check failures,
+            reserve drain (Allium detects), keyset change. Score drops below 50 — migration triggers automatically.
+          </p>
+          <div className="flex items-center gap-1 text-[10px] font-mono text-[#f85149]">
+            <Play size={10} /> Click to start 12-second progressive simulation
+          </div>
+        </button>
+
+        {/* Degradation progress indicator */}
+        {activeScenario === 'progressive' && degradationStep > 0 && (
+          <div className="mt-3 rounded-lg border border-[#30363d] bg-[#0d1117] p-3">
+            <div className="text-[10px] font-mono text-[#8b949e] uppercase tracking-wider mb-2">
+              Degradation Progress
+            </div>
+            <div className="space-y-2">
+              {DEGRADATION_STEPS.map((step, i) => {
+                const isActive = degradationStep === i + 1;
+                const isDone = degradationStep > i + 1;
+                return (
+                  <div
+                    key={i}
+                    className={`flex items-center gap-2 text-[10px] font-mono transition-all duration-300 ${
+                      isActive ? 'text-[#f85149] font-semibold' : isDone ? 'text-[#8b949e]' : 'text-[#8b949e]/40'
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] border transition-all ${
+                        isDone
+                          ? 'bg-[#f85149]/20 border-[#f85149]/50 text-[#f85149]'
+                          : isActive
+                            ? 'bg-[#f85149]/20 border-[#f85149] text-[#f85149] animate-pulse'
+                            : 'bg-[#21262d] border-[#30363d] text-[#8b949e]/40'
+                      }`}
+                    >
+                      {isDone ? '✓' : i + 1}
+                    </div>
+                    <span>{step.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* Scenario Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -433,7 +618,7 @@ export default function SimulationPanel() {
         })}
       </div>
 
-      {/* Math explanation */}
+      {/* Algorithm Output */}
       {state.simulationActive && effectiveScores.length > 0 && (
         <div className="mt-4 rounded-lg border border-[#30363d] bg-[#0d1117] p-4">
           <h4 className="text-[11px] font-mono font-semibold text-[#a855f7] uppercase tracking-wider mb-3">
@@ -441,19 +626,35 @@ export default function SimulationPanel() {
           </h4>
           <div className="space-y-1 text-[10px] font-mono text-[#8b949e]">
             <div>
-              <span className="text-[#c9d1d9]">Composite Score</span> = Sum(signal_value x weight) x 100
+              <span className="text-[#c9d1d9]">T(m)</span> = Sum(w_i * n_i(m)) * 100
             </div>
             <div>
-              <span className="text-[#c9d1d9]">Allocation</span> = (score_i / Sum(eligible_scores)) x 100, capped at 40%
+              <span className="text-[#c9d1d9]">alloc(m_i)</span> = min(0.40, T_i / Sum(T_eligible))
+            </div>
+            <div>
+              <span className="text-[#c9d1d9]">Migration trigger</span>: T(m) {'<'} 50 AND exists target with T {'>='} 60 (hysteresis = 10)
             </div>
             <div className="pt-2 border-t border-[#21262d] mt-2">
               Safe: {effectiveScores.filter(s => s.grade === 'safe').length} |{' '}
               Warning: {effectiveScores.filter(s => s.grade === 'warning').length} |{' '}
               Critical: {effectiveScores.filter(s => s.grade === 'critical').length} |{' '}
               <span className="text-[#c9d1d9]">
-                Mode: {state.automationMode === 'auto' ? 'Auto-Migrate' : state.automationMode === 'alert' ? 'Alert Only' : 'Manual'}
+                Mode: {state.automationMode === 'auto' ? 'Auto-Migrate' : state.automationMode === 'alert' ? 'Alert Only' : 'Manual (Dashboard)'}
               </span>
             </div>
+            {/* VaR calculation */}
+            {(() => {
+              const totalExposure = 100000;
+              const portfolioVaR = effectiveScores.reduce((sum, mint) => {
+                const exposure = (mint.allocationPct / 100) * totalExposure;
+                return sum + exposure * (1 - mint.compositeScore / 100);
+              }, 0);
+              return (
+                <div className="text-[#d29922]">
+                  Portfolio VaR (100k sats): {Math.round(portfolioVaR).toLocaleString()} sats at risk
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}

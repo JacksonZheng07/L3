@@ -1,6 +1,6 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AppView, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert } from './types';
+import type { AppState, AppView, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert, DemoMode, EntityWallet, Federation } from './types';
 import { MINTS, SCORING_INTERVAL_MS } from '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
@@ -20,6 +20,9 @@ const initialState: AppState = {
   alerts: [],
   simulationActive: false,
   simulationScores: null,
+  demoMode: 'mock',
+  entityWallets: [],
+  federations: [],
 };
 
 type Action =
@@ -37,7 +40,10 @@ type Action =
   | { type: 'SET_ALERT_ACTION'; id: string; action: TrustAlert['actionTaken'] }
   | { type: 'CLEAR_ALERTS' }
   | { type: 'SET_SIMULATION_ACTIVE'; active: boolean }
-  | { type: 'SET_SIMULATION_SCORES'; scores: MintScore[] | null };
+  | { type: 'SET_SIMULATION_SCORES'; scores: MintScore[] | null }
+  | { type: 'SET_DEMO_MODE'; mode: DemoMode }
+  | { type: 'SET_ENTITY_WALLETS'; wallets: EntityWallet[] }
+  | { type: 'SET_FEDERATIONS'; federations: Federation[] };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -79,6 +85,12 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, simulationActive: action.active, simulationScores: action.active ? state.simulationScores : null };
     case 'SET_SIMULATION_SCORES':
       return { ...state, simulationScores: action.scores };
+    case 'SET_DEMO_MODE':
+      return { ...state, demoMode: action.mode };
+    case 'SET_ENTITY_WALLETS':
+      return { ...state, entityWallets: action.wallets };
+    case 'SET_FEDERATIONS':
+      return { ...state, federations: action.federations };
     default:
       return state;
   }

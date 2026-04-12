@@ -84,6 +84,32 @@ export interface SimulationScenario {
 
 export type AppView = 'dashboard' | 'mints' | 'send' | 'receive';
 
+// Demo environment mode
+export type DemoMode = 'mock' | 'testnet' | 'mainnet';
+
+// Fedimint entity wallets
+export interface EntityWallet {
+  id: string;
+  name: string;
+  role: 'user' | 'mint_operator' | 'guardian' | 'federation';
+  balanceSats: number;
+  address: string; // Lightning or on-chain address
+  mintUrl?: string;
+  federationId?: string;
+}
+
+// Fedimint federation
+export interface Federation {
+  id: string;
+  name: string;
+  guardians: EntityWallet[];
+  threshold: number; // m-of-n
+  totalGuardians: number;
+  mintUrl: string;
+  trustScore: number;
+  status: 'healthy' | 'degraded' | 'offline';
+}
+
 export interface AppState {
   scores: MintScore[];
   probeResults: Map<string, ProbeResult>;
@@ -94,9 +120,11 @@ export interface AppState {
   lastScoredAt: string | null;
   currentView: AppView;
   selectedMint: string | null;
-  // New fields
   automationMode: AutomationMode;
   alerts: TrustAlert[];
   simulationActive: boolean;
-  simulationScores: MintScore[] | null; // overrides scores when sim is active
+  simulationScores: MintScore[] | null;
+  demoMode: DemoMode;
+  entityWallets: EntityWallet[];
+  federations: Federation[];
 }

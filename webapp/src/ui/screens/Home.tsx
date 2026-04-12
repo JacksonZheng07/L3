@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useStore } from '../../state/store';
 import TrustSpectrum from '../components/TrustSpectrum';
 import ScoreChart from '../components/ScoreChart';
@@ -8,12 +9,18 @@ import MintCard from '../components/MintCard';
 import SimulationPanel from '../components/SimulationPanel';
 import AutomationControl from '../components/AutomationControl';
 import AlertPanel from '../components/AlertPanel';
-import { RefreshCw, Activity, Radio, FlaskConical, Building2 } from 'lucide-react';
+import DemoModeSelector from '../components/DemoModeSelector';
+import FedimintArchitecture from '../components/FedimintArchitecture';
+import MathTheory from '../components/MathTheory';
+import { RefreshCw, Activity, Radio, FlaskConical, Building2, ChevronDown, ChevronUp, BarChart3, Shield, Brain, Layers } from 'lucide-react';
 import { SCORING_INTERVAL_MS } from '../../core/config';
+
+type Section = 'demo' | 'math' | 'fedimint';
 
 export default function Home() {
   const { state, runScoring, effectiveScores } = useStore();
   const { balances, isScoring, lastScoredAt, simulationActive } = state;
+  const [expandedSection, setExpandedSection] = useState<Section | null>(null);
 
   const balanceMap = new Map(balances.map((b) => [b.mintUrl, b.balance]));
 
@@ -23,6 +30,10 @@ export default function Home() {
 
   const onlineCount = effectiveScores.filter((s) => s.isOnline).length;
   const pollingSeconds = SCORING_INTERVAL_MS / 1000;
+
+  const toggleSection = (section: Section) => {
+    setExpandedSection(expandedSection === section ? null : section);
+  };
 
   return (
     <div className="min-h-screen bg-[#0d1117] text-[#c9d1d9]">
@@ -60,17 +71,27 @@ export default function Home() {
             </div>
             <div className="hidden sm:flex flex-col">
               <span className="text-[11px] font-semibold text-[#c9d1d9] tracking-wide" style={{ fontFamily: "'Orbitron', sans-serif" }}>
-                LIQUIDITY LIGHTNING
+                BITCOIN PORTFOLIO RISK ENGINE
               </span>
               <span className="text-[9px] text-[#8b949e] tracking-widest flex items-center gap-1">
                 <Building2 size={8} />
-                ENTERPRISE BITCOIN PORTFOLIO MANAGEMENT
+                INSTITUTIONAL-GRADE COUNTERPARTY MONITORING
               </span>
             </div>
           </div>
 
           {/* Status + Controls */}
           <div className="flex items-center gap-3">
+            {/* Demo mode indicator */}
+            <div className="hidden md:flex items-center gap-1.5 text-[10px] font-mono text-[#8b949e] bg-[#21262d] rounded px-2 py-1 border border-[#30363d]">
+              <span className={
+                state.demoMode === 'mock' ? 'text-[#a855f7]' :
+                state.demoMode === 'testnet' ? 'text-[#d29922]' : 'text-[#3fb950]'
+              }>
+                {state.demoMode === 'mock' ? 'MOCK' : state.demoMode === 'testnet' ? 'TESTNET' : 'MAINNET'}
+              </span>
+            </div>
+
             {/* Simulation indicator */}
             {simulationActive && (
               <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#a855f7] bg-[#a855f7]/10 rounded px-2.5 py-1 border border-[#a855f7]/30 animate-pulse">
@@ -121,8 +142,50 @@ export default function Home() {
 
       {/* Main content */}
       <main className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-        {/* Simulation Panel — prominent at top for demo */}
-        <SimulationPanel />
+        {/* B2B Pitch Hero */}
+        <div className="rounded-lg border border-[#58a6ff]/20 bg-gradient-to-r from-[#58a6ff]/5 via-[#a855f7]/5 to-[#3fb950]/5 p-6">
+          <div className="text-center max-w-3xl mx-auto">
+            <h1
+              className="text-xl font-black tracking-tight mb-2"
+              style={{
+                fontFamily: "'Orbitron', sans-serif",
+                background: 'linear-gradient(135deg, #58a6ff 0%, #a855f7 50%, #22c55e 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
+            >
+              Bitcoin Portfolio Risk Management for Companies
+            </h1>
+            <p className="text-[11px] font-mono text-[#8b949e] leading-relaxed max-w-2xl mx-auto">
+              Companies holding Bitcoin in custodial ecash need a system that monitors counterparty health,
+              enforces diversification policy, and acts autonomously when a custodian degrades. L3 is that system.
+            </p>
+            <div className="flex items-center justify-center gap-4 mt-3">
+              <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#58a6ff]">
+                <BarChart3 size={10} /> 9-Signal Scoring
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#3fb950]">
+                <Shield size={10} /> 40% Max Exposure Cap
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#a855f7]">
+                <Brain size={10} /> Bayesian Updates
+              </div>
+              <div className="flex items-center gap-1.5 text-[10px] font-mono text-[#d29922]">
+                <Layers size={10} /> 3 Trust Layers
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Demo Mode + Simulation Panel */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-1">
+            <DemoModeSelector />
+          </div>
+          <div className="lg:col-span-2">
+            <SimulationPanel />
+          </div>
+        </div>
 
         {/* Trust Response Mode + Alerts */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -135,13 +198,10 @@ export default function Home() {
 
         {/* Two-column grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left column */}
           <div className="space-y-6">
             <ScoreChart />
             <ThreeCurvesChart />
           </div>
-
-          {/* Right column */}
           <div className="space-y-6">
             <AllocationPie />
             <MigrationLog />
@@ -164,36 +224,119 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Enterprise pitch footer */}
-        <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-6 text-center">
-          <h4 className="text-xs font-mono font-semibold text-[#8b949e] uppercase tracking-widest mb-3">
-            Why L3 for Enterprise
+        {/* Expandable Sections */}
+        <div className="space-y-3">
+          {/* Mathematical Framework */}
+          <div className="rounded-lg border border-[#30363d] overflow-hidden">
+            <button
+              onClick={() => toggleSection('math')}
+              className="w-full flex items-center justify-between p-4 bg-[#161b22] hover:bg-[#161b22]/80 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Brain size={16} className="text-[#a855f7]" />
+                <span className="text-sm font-mono font-semibold text-[#c9d1d9]">
+                  Mathematical Framework — The Theory Behind the Scores
+                </span>
+              </div>
+              {expandedSection === 'math' ? (
+                <ChevronUp size={16} className="text-[#8b949e]" />
+              ) : (
+                <ChevronDown size={16} className="text-[#8b949e]" />
+              )}
+            </button>
+            {expandedSection === 'math' && (
+              <div className="p-4 bg-[#0d1117]">
+                <MathTheory />
+              </div>
+            )}
+          </div>
+
+          {/* Fedimint Architecture */}
+          <div className="rounded-lg border border-[#30363d] overflow-hidden">
+            <button
+              onClick={() => toggleSection('fedimint')}
+              className="w-full flex items-center justify-between p-4 bg-[#161b22] hover:bg-[#161b22]/80 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <Shield size={16} className="text-[#3fb950]" />
+                <span className="text-sm font-mono font-semibold text-[#c9d1d9]">
+                  Fedimint Federations — Multi-Guardian Architecture
+                </span>
+                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-[#3fb950]/20 text-[#3fb950] border border-[#3fb950]/30">
+                  +15 TRUST BONUS
+                </span>
+              </div>
+              {expandedSection === 'fedimint' ? (
+                <ChevronUp size={16} className="text-[#8b949e]" />
+              ) : (
+                <ChevronDown size={16} className="text-[#8b949e]" />
+              )}
+            </button>
+            {expandedSection === 'fedimint' && (
+              <div className="p-4 bg-[#0d1117]">
+                <FedimintArchitecture />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Enterprise Pitch Footer */}
+        <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-6">
+          <h4 className="text-xs font-mono font-semibold text-[#8b949e] uppercase tracking-widest mb-3 text-center">
+            Why L3 for Enterprise Bitcoin Treasury
           </h4>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left max-w-4xl mx-auto">
             <div className="rounded-lg bg-[#0d1117] border border-[#21262d] p-4">
-              <div className="text-[11px] font-mono font-semibold text-[#58a6ff] mb-1">On-Chain Verification</div>
+              <div className="text-[11px] font-mono font-semibold text-[#58a6ff] mb-1">On-Chain Intelligence</div>
               <div className="text-[10px] font-mono text-[#8b949e] leading-relaxed">
-                Allium Labs API cross-references operator addresses, reserve balances, and transaction patterns against blockchain data. No self-reported metrics.
+                Allium Labs API: holder concentration, wash trading detection, deployer wallet profiles, entity labels.
+                60% weight from on-chain data that can't be faked.
               </div>
             </div>
             <div className="rounded-lg bg-[#0d1117] border border-[#21262d] p-4">
-              <div className="text-[11px] font-mono font-semibold text-[#3fb950] mb-1">Weighted Composite Scoring</div>
+              <div className="text-[11px] font-mono font-semibold text-[#3fb950] mb-1">Mathematically Rigorous</div>
               <div className="text-[10px] font-mono text-[#8b949e] leading-relaxed">
-                9-signal weighted model: 60% on-chain intelligence (Allium), 40% direct protocol probes. Mathematically transparent. Weights auditable.
+                Weighted composite scoring with Bayesian updates, portfolio VaR calculation,
+                Markowitz-inspired allocation with 40% exposure cap and hysteresis migration.
               </div>
             </div>
             <div className="rounded-lg bg-[#0d1117] border border-[#21262d] p-4">
-              <div className="text-[11px] font-mono font-semibold text-[#a855f7] mb-1">Configurable Response</div>
+              <div className="text-[11px] font-mono font-semibold text-[#a855f7] mb-1">Configurable Trust Layers</div>
               <div className="text-[10px] font-mono text-[#8b949e] leading-relaxed">
-                Auto-migrate, alert-only, or manual. Enterprises control risk tolerance. Fedimint integration planned for federated custody tier.
+                Dashboard, webhook, or full automation. Supports Cashu (single operator) and
+                Fedimint (federated) custodians. Your treasury policy, L3's execution.
               </div>
+            </div>
+          </div>
+
+          {/* Roadmap */}
+          <div className="mt-4 pt-4 border-t border-[#21262d]">
+            <div className="text-[9px] font-mono text-[#8b949e] uppercase tracking-widest text-center mb-3">
+              Roadmap
+            </div>
+            <div className="flex items-center justify-center gap-2 text-[9px] font-mono">
+              <span className="px-2 py-1 rounded bg-[#3fb950]/20 text-[#3fb950] border border-[#3fb950]/30">
+                Phase 1: Cashu + Mock Allium
+              </span>
+              <span className="text-[#8b949e]">{'>'}</span>
+              <span className="px-2 py-1 rounded bg-[#58a6ff]/20 text-[#58a6ff] border border-[#58a6ff]/30">
+                Phase 2: Fedimint SDK + Live Allium
+              </span>
+              <span className="text-[#8b949e]">{'>'}</span>
+              <span className="px-2 py-1 rounded bg-[#a855f7]/20 text-[#a855f7] border border-[#a855f7]/30">
+                Phase 3: Ark Self-Custody
+              </span>
+              <span className="text-[#8b949e]">{'>'}</span>
+              <span className="px-2 py-1 rounded bg-[#d29922]/20 text-[#d29922] border border-[#d29922]/30">
+                Phase 4: Enterprise API
+              </span>
             </div>
           </div>
         </div>
 
         {/* Footer */}
         <footer className="text-center text-[10px] font-mono text-[#8b949e]/40 py-6 border-t border-[#21262d]">
-          L3 — Liquidity Lightning Load Leveler — MIT Bitcoin Hackathon 2026 — "Freedom for All"
+          L3 — Bitcoin Portfolio Risk Engine — MIT Bitcoin Hackathon 2026 — Institutional-Grade Counterparty Monitoring
         </footer>
       </main>
     </div>
