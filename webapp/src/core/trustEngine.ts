@@ -761,10 +761,11 @@ export async function scoreAllMints(
   cachedKeysets: Map<string, string[]>,
   prevScores: Map<string, number> = new Map(),
 ): Promise<MintScore[]> {
-  // Score mints in batches of 3 to balance speed vs Allium rate limits.
+  // Score mints in batches of 2 to stay under Allium rate limits.
   // Each mint makes up to 3 Allium calls in parallel internally, so a
-  // batch of 3 = ~9 concurrent requests — fast but under the 429 threshold.
-  const BATCH_SIZE = 3;
+  // batch of 2 = ~6 concurrent requests. Results are cached for 5 min
+  // so subsequent scoring cycles are instant.
+  const BATCH_SIZE = 2;
   const results: MintScore[] = [];
 
   for (let i = 0; i < mints.length; i += BATCH_SIZE) {
