@@ -111,6 +111,7 @@ export interface Federation {
 }
 
 export interface AppState {
+  discoveredMints: MintConfig[];
   scores: MintScore[];
   probeResults: Map<string, ProbeResult>;
   migrations: MigrationEvent[];

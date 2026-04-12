@@ -19,26 +19,12 @@ export const MINTS: MintConfig[] = [
   // Mints with known operator addresses (Allium will query these)
   { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'] },
   { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: ['bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf'] },
-  { url: 'https://mint.lnbits.com/cashu/api/v1/AptDNABNBXv8gpuywhx6NV', name: 'LNbits Cashu', operatorAddresses: [] },
 
-  // Anonymous mints (no on-chain identity — capped at ~40 score max)
+  // Anonymous mints — verified live as of 2026-04-11
   { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: [] },
-  { url: 'https://8333.space:3338',                  name: '8333.space',         operatorAddresses: [] },
   { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: [] },
-  { url: 'https://mint.enuts.cash',                  name: 'eNuts',              operatorAddresses: [] },
-  { url: 'https://legend.lnbits.com/cashu/api/v1/4gr9Xcmz3XEkUNwiBiQGoC', name: 'Legend LNbits', operatorAddresses: [] },
-  { url: 'https://mint.nutstash.app',                name: 'Nutstash',           operatorAddresses: [] },
   { url: 'https://mint.0xchat.com',                  name: '0xChat',             operatorAddresses: [] },
   { url: 'https://mint.lnvoltz.com',                 name: 'LN Voltz',           operatorAddresses: [] },
-  { url: 'https://nuts.jooray.com',                  name: 'Jooray Nuts',        operatorAddresses: [] },
-  { url: 'https://mint.bitcointxoko.com',            name: 'Bitcoin Txoko',      operatorAddresses: [] },
-  { url: 'https://mint.siamstr.com',                 name: 'Siamstr',            operatorAddresses: [] },
-  { url: 'https://mint.nimo.cash',                   name: 'Nimo Cash',          operatorAddresses: [] },
-  { url: 'https://cashme.lnmarkets.com',             name: 'LN Markets',         operatorAddresses: [] },
-  { url: 'https://mint.sovereign.app',               name: 'Sovereign',          operatorAddresses: [] },
-  { url: 'https://mint.wontfix.de',                  name: 'Wontfix',            operatorAddresses: [] },
-  { url: 'https://mint.lnwallet.app',                name: 'LN Wallet',          operatorAddresses: [] },
-  { url: 'https://mint.0sats.com',                   name: '0sats',              operatorAddresses: [] },
 ];
 
 export const WEIGHTS: Record<string, number> = {

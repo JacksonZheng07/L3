@@ -1,13 +1,15 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AppView, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert, DemoMode, EntityWallet, Federation } from './types';
-import { MINTS, SCORING_INTERVAL_MS } from '../core/config';
+import type { AppState, AppView, MintConfig, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert, DemoMode, EntityWallet, Federation } from './types';
+import '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
 import { walletEngine } from '../core/walletEngine';
 import { computeMigrationPlans, executeMigration } from '../core/migrationEngine';
+import { discoverMints } from '../core/mintDiscovery';
 
 const initialState: AppState = {
+  discoveredMints: [],
   scores: [],
   probeResults: new Map(),
   migrations: [],
@@ -45,7 +47,8 @@ type Action =
   | { type: 'SET_DEMO_MODE'; mode: DemoMode }
   | { type: 'SET_ENTITY_WALLETS'; wallets: EntityWallet[] }
   | { type: 'SET_FEDERATIONS'; federations: Federation[] }
-  | { type: 'SET_TOTAL_BALANCE'; amount: number };
+  | { type: 'SET_TOTAL_BALANCE'; amount: number }
+  | { type: 'SET_DISCOVERED_MINTS'; mints: MintConfig[] };
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
@@ -95,6 +98,8 @@ function reducer(state: AppState, action: Action): AppState {
       return { ...state, federations: action.federations };
     case 'SET_TOTAL_BALANCE':
       return { ...state, totalBalance: action.amount };
+    case 'SET_DISCOVERED_MINTS':
+      return { ...state, discoveredMints: action.mints };
     default:
       return state;
   }
@@ -117,6 +122,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const cachedKeysets = useRef<Map<string, string[]>>(new Map());
   const scoringRef = useRef(false);
   const prevScoresRef = useRef<Map<string, number>>(new Map());
+  const mintsRef = useRef<MintConfig[]>([]);
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -128,12 +134,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const runScoring = useCallback(async () => {
     if (scoringRef.current) return;
+    const mints = mintsRef.current;
+    if (mints.length === 0) return; // not yet discovered
     scoringRef.current = true;
     dispatch({ type: 'SET_SCORING', isScoring: true });
 
     try {
       const probeResults = new Map<string, ProbeResult>();
-      const probePromises = MINTS.map(async (mint) => {
+      const probePromises = mints.map(async (mint) => {
         const [info, keysets] = await Promise.all([
           probeMintInfo(mint.url),
           probeMintKeysets(mint.url),
@@ -145,7 +153,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       await Promise.allSettled(probePromises);
 
-      const scores = await scoreAllMints(MINTS, probeResults, cachedKeysets.current);
+      const scores = await scoreAllMints(mints, probeResults, cachedKeysets.current);
 
       // Update keyset cache
       for (const score of scores) {
@@ -292,16 +300,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     : state.scores;
 
   useEffect(() => {
-    walletEngine.initialize().then(() => {
-      refreshBalances();
-      runScoring();
+    // Discover mints from Nostr NIP-87, then init wallet (no auto-scoring)
+    discoverMints().then((mints) => {
+      console.log(`[L3] Discovered ${mints.length} mints from NIP-87`);
+      mintsRef.current = mints;
+      dispatch({ type: 'SET_DISCOVERED_MINTS', mints });
+
+      walletEngine.initialize().then(() => {
+        refreshBalances();
+      });
     });
 
-    const interval = setInterval(() => {
-      runScoring();
-    }, SCORING_INTERVAL_MS);
-
-    return () => clearInterval(interval);
+    return () => {};
   }, [runScoring, refreshBalances]);
 
   return (
