@@ -6,6 +6,8 @@
 import type { MintConfig, DemoMode } from '../src/state/types.js';
 
 export const ALLIUM_API_KEY = process.env.ALLIUM_API_KEY || '';
+export const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+export const DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || '';
 
 export const TESTNET_MINT_URL = 'https://testnut.cashu.space';
 export const MUTINYNET_MINT_URL = 'https://cashu.mutinynet.com';

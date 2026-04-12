@@ -83,3 +83,35 @@ body {
 .animate-fade-in {
   animation: fade-in 0.3s ease-out;
 }
+
+/* ── Vertical breathing room ── */
+
+/* Bump space-y-6 (1.5rem → 2.75rem) */
+.space-y-6 > * + * {
+  margin-top: 2.75rem !important;
+}
+
+/* Bump space-y-3 (0.75rem → 1.5rem) */
+.space-y-3 > * + * {
+  margin-top: 1.5rem !important;
+}
+
+/* Increase row-gap in grid layouts */
+.gap-4 {
+  row-gap: 1.75rem !important;
+}
+.gap-6 {
+  row-gap: 2.75rem !important;
+}
+
+/* Give cards & panels more inner padding */
+main .rounded-lg {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Extra margin below the main content wrapper */
+main > div.p-6 {
+  padding-top: 2rem;
+  padding-bottom: 2rem;
+}

@@ -174,13 +174,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   async function executeAutoMigrations(
     scores: MintScore[],
     currentState: AppState,
-  ): Promise<void> {
+  ): Promise<TrustAlert[]> {
+    const modeAlerts: TrustAlert[] = [];
+
     if (currentState.automationMode === 'auto' && currentState.totalBalance > 0) {
       const plans = computeMigrationPlans(scores, currentState.balances, currentState.totalBalance);
 
-      generateAutoMigrationAlerts(plans, scores).forEach((alert) =>
-        dispatch({ type: 'ADD_ALERT', alert }),
-      );
+      const autoAlerts = generateAutoMigrationAlerts(plans, scores);
+      autoAlerts.forEach((alert) => dispatch({ type: 'ADD_ALERT', alert }));
+      modeAlerts.push(...autoAlerts);
 
       for (const plan of plans) {
         const event = await executeMigration(plan);
@@ -190,10 +192,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (plans.length > 0) refreshBalances();
     } else if (currentState.automationMode === 'alert') {
       const plans = computeMigrationPlans(scores, currentState.balances, currentState.totalBalance);
-      generateAlertModeSuggestions(plans, scores).forEach((alert) =>
-        dispatch({ type: 'ADD_ALERT', alert }),
-      );
+      const suggestAlerts = generateAlertModeSuggestions(plans, scores);
+      suggestAlerts.forEach((alert) => dispatch({ type: 'ADD_ALERT', alert }));
+      modeAlerts.push(...suggestAlerts);
     }
+
+    return modeAlerts;
   }
 
   /** Coordinator: probe → score → alert → (auto-)migrate */
@@ -213,13 +217,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
       updateKeysetCache(scores);
 
-      generateScoreAlerts(scores, prevScoresRef.current).forEach((alert) =>
-        dispatch({ type: 'ADD_ALERT', alert }),
-      );
+      const scoreAlerts = generateScoreAlerts(scores, prevScoresRef.current);
+      scoreAlerts.forEach((alert) => dispatch({ type: 'ADD_ALERT', alert }));
       scores.forEach((s) => prevScoresRef.current.set(s.url, s.compositeScore));
 
       dispatch({ type: 'SET_SCORES', scores });
-      await executeAutoMigrations(scores, stateRef.current);
+      const modeAlerts = await executeAutoMigrations(scores, stateRef.current);
+
+      // Send to Discord if in alert or auto mode and there are alerts
+      const allAlerts = [...scoreAlerts, ...modeAlerts];
+      if (stateRef.current.automationMode !== 'manual' && allAlerts.length > 0) {
+        walletApi.notifyDiscord(allAlerts).catch((err) =>
+          console.warn('[L3] Discord notification failed:', err),
+        );
+      }
     } catch (err) {
       console.error('[L3] Scoring failed:', err);
       dispatch({ type: 'SET_SCORING', isScoring: false });

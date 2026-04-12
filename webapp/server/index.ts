@@ -2,8 +2,9 @@ import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { walletEngine } from './walletEngine.js';
-import { MINTS, getMintsForMode, ALLIUM_API_KEY } from './config.js';
-import type { MintScore, MintConfig } from '../src/state/types.js';
+import { MINTS, getMintsForMode, ALLIUM_API_KEY, DISCORD_BOT_TOKEN, DISCORD_CHANNEL_ID } from './config.js';
+import { sendDiscordAlerts } from './discordNotifier.js';
+import type { MintScore, MintConfig, TrustAlert } from '../src/state/types.js';
 
 const PORT = parseInt(process.env.PORT || '3456', 10);
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -85,6 +86,45 @@ app.post('/api/wallet/migrate', async (req: Request, res: Response) => {
   }
   const result = await walletEngine.migrate(from, to, amount, reason);
   res.json(result);
+});
+
+// ── Discord notification routes ─────────────────────────────────────
+
+app.post('/api/discord/notify', async (req: Request, res: Response) => {
+  const { alerts } = req.body as { alerts: TrustAlert[] };
+  if (!alerts || !Array.isArray(alerts) || alerts.length === 0) {
+    res.status(400).json({ ok: false, error: 'alerts array is required' });
+    return;
+  }
+  const success = await sendDiscordAlerts(alerts);
+  res.json({ ok: success, sent: alerts.length });
+});
+
+app.get('/api/discord/status', (_req: Request, res: Response) => {
+  res.json({
+    configured: !!(DISCORD_BOT_TOKEN && DISCORD_CHANNEL_ID),
+    channelId: DISCORD_CHANNEL_ID || null,
+  });
+});
+
+app.post('/api/discord/test', async (_req: Request, res: Response) => {
+  if (!DISCORD_BOT_TOKEN || !DISCORD_CHANNEL_ID) {
+    res.status(400).json({ ok: false, error: 'Discord not configured. Set DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID.' });
+    return;
+  }
+  const testAlert: TrustAlert = {
+    id: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+    mintUrl: 'https://test.example.com',
+    mintName: 'Test Mint',
+    type: 'score_drop',
+    message: 'This is a test alert from L3 Trust Engine. If you see this, Discord notifications are working!',
+    score: 42,
+    previousScore: 78,
+    dismissed: false,
+  };
+  const success = await sendDiscordAlerts([testAlert]);
+  res.json({ ok: success });
 });
 
 // ── Allium API proxy ────────────────────────────────────────────────

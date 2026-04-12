@@ -3,6 +3,7 @@ import { useStore } from '../../state/store';
 import { buildScenarios, perturbScore, DEGRADATION_STEPS } from '../../core/simulationEngine';
 import { generateSimulationAlerts, generateDegradationAlert } from '../../core/alertEngine';
 import { computeAllocation } from '../../core/trustEngine';
+import { walletApi } from '../../core/walletApi';
 import {
   AlertTriangle,
   TrendingDown,
@@ -61,6 +62,16 @@ export default function SimulationPanel() {
       );
       alerts.forEach((alert) => dispatch({ type: 'ADD_ALERT', alert }));
       migrationEvents.forEach((event) => dispatch({ type: 'ADD_MIGRATION', event }));
+
+      // Send extreme simulation alerts to Discord
+      const extremeAlerts = alerts.filter(
+        (a) => a.type === 'critical' || a.type === 'migration_suggested' || a.type === 'migration_executed',
+      );
+      if (extremeAlerts.length > 0) {
+        walletApi.notifyDiscord(extremeAlerts).catch((err) =>
+          console.warn('[L3] Discord simulation notification failed:', err),
+        );
+      }
     },
     [dispatch, state.automationMode, state.totalBalance, liveScores, hasLiveData, scenarios],
   );
@@ -96,6 +107,13 @@ export default function SimulationPanel() {
         state.automationMode,
       );
       dispatch({ type: 'ADD_ALERT', alert });
+
+      // Send critical degradation steps to Discord
+      if (alert.type === 'critical') {
+        walletApi.notifyDiscord([alert]).catch((err) =>
+          console.warn('[L3] Discord degradation notification failed:', err),
+        );
+      }
 
       if (degradingMint.grade === 'critical' && state.automationMode === 'auto') {
         const safeMints = allocated.filter((s) => s.grade === 'safe');

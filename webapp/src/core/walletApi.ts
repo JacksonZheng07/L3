@@ -3,7 +3,7 @@
  * Same method names as the old walletEngine so call sites are near-mechanical replacements.
  */
 
-import type { MintConfig, DemoMode, WalletBalance, MigrationEvent, MintScore } from '../state/types';
+import type { MintConfig, DemoMode, WalletBalance, MigrationEvent, MintScore, TrustAlert } from '../state/types';
 
 // ── Result types (match server responses) ───────────────────────────
 export interface Success<T> { ok: true; data: T }
@@ -82,5 +82,19 @@ export const walletApi = {
     reason?: string,
   ): Promise<Result<MigrationEvent>> {
     return post('/api/wallet/migrate', { from, to, amount, reason });
+  },
+
+  // ── Discord notifications ──────────────────────────────────────────
+
+  async notifyDiscord(alerts: TrustAlert[]): Promise<Result<{ sent: number }>> {
+    return post('/api/discord/notify', { alerts });
+  },
+
+  async getDiscordStatus(): Promise<{ configured: boolean; channelId: string | null }> {
+    return get('/api/discord/status', { configured: false, channelId: null });
+  },
+
+  async testDiscord(): Promise<Result<void>> {
+    return post('/api/discord/test', {});
   },
 };

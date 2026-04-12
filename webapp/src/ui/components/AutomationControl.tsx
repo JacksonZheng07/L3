@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react';
 import { useStore } from '../../state/store';
+import { walletApi } from '../../core/walletApi';
 import type { AutomationMode } from '../../state/types';
 import { Monitor, Webhook, Bot } from 'lucide-react';
 
@@ -42,6 +44,21 @@ const modes: {
 
 export default function AutomationControl() {
   const { state, dispatch } = useStore();
+  const [discordStatus, setDiscordStatus] = useState<{ configured: boolean; channelId: string | null } | null>(null);
+  const [testResult, setTestResult] = useState<'idle' | 'sending' | 'success' | 'failed'>('idle');
+
+  useEffect(() => {
+    if (state.automationMode === 'alert' || state.automationMode === 'auto') {
+      walletApi.getDiscordStatus().then(setDiscordStatus);
+    }
+  }, [state.automationMode]);
+
+  const handleTestDiscord = async () => {
+    setTestResult('sending');
+    const result = await walletApi.testDiscord();
+    setTestResult(result.ok ? 'success' : 'failed');
+    setTimeout(() => setTestResult('idle'), 3000);
+  };
 
   return (
     <div className="rounded-lg border border-[#30363d] bg-[#161b22] p-4">
@@ -125,6 +142,34 @@ export default function AutomationControl() {
   "timestamp": "${new Date().toISOString()}"
 }`}
           </pre>
+        </div>
+      )}
+
+      {/* Discord notification status */}
+      {(state.automationMode === 'alert' || state.automationMode === 'auto') && discordStatus && (
+        <div className="mt-3 rounded-lg border border-[#30363d] bg-[#0d1117] p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full ${discordStatus.configured ? 'bg-[#3fb950]' : 'bg-[#f85149]'}`} />
+              <span className="text-[10px] font-mono text-[#c9d1d9]">
+                Discord {discordStatus.configured ? 'Connected' : 'Not Configured'}
+              </span>
+            </div>
+            {discordStatus.configured && (
+              <button
+                onClick={handleTestDiscord}
+                disabled={testResult === 'sending'}
+                className="text-[9px] font-mono px-2 py-1 rounded bg-[#21262d] text-[#8b949e] border border-[#30363d] hover:bg-[#30363d] hover:text-[#c9d1d9] transition-colors disabled:opacity-40"
+              >
+                {testResult === 'sending' ? 'Sending...' : testResult === 'success' ? 'Sent!' : testResult === 'failed' ? 'Failed' : 'Test Discord'}
+              </button>
+            )}
+          </div>
+          {!discordStatus.configured && (
+            <p className="text-[8px] font-mono text-[#8b949e] mt-1.5">
+              Set DISCORD_BOT_TOKEN and DISCORD_CHANNEL_ID env vars to enable notifications.
+            </p>
+          )}
         </div>
       )}
     </div>
