@@ -9,6 +9,7 @@ const VIEW_LABELS: Record<AppView, string> = {
   alerts: 'Alerts',
   simulation: 'Simulation',
   migrations: 'Migrations',
+  wallet: 'Wallet',
 };
 
 const DEMO_MODE_STYLE = {

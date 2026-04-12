@@ -171,7 +171,6 @@ export default function TransferPanel() {
                     {effectiveScores
                       .filter((s) => s.url !== fromUrl)
                       .map((s) => {
-                        const color = gradeColor(s.grade);
                         return (
                           <option key={s.url} value={s.url}>
                             {s.name} · {s.grade.toUpperCase()} ({s.compositeScore.toFixed(0)})

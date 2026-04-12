@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../../state/store';
 import { mnemonicToSeed, validateMnemonicLength } from '../../lib/bip39';
 import type { WalletConnection } from '../../state/types';
 import { Wallet, ShieldCheck, AlertTriangle, Loader, CheckCircle, XCircle, Eye, EyeOff } from 'lucide-react';
 
-const STATUS_ICON: Record<string, JSX.Element> = {
+const STATUS_ICON: Record<string, React.ReactNode> = {
   idle:       <span className="h-2 w-2 rounded-full bg-[#30363d]" />,
   connecting: <Loader size={10} className="animate-spin text-[#d29922]" />,
   connected:  <CheckCircle size={10} className="text-[#3fb950]" />,
