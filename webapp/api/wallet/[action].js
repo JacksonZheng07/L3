@@ -3,7 +3,7 @@
  *
  * Handles all /api/wallet/* routes. The wallet engine lives at module scope
  * so it persists across warm invocations (~5-15 min on Vercel).
- * On cold starts the wallet reinitializes fresh.
+ * On cold starts proofs are restored from Vercel Blob.
  *
  * Routes:
  *   GET  /api/wallet/mode       → current demo mode
@@ -16,6 +16,7 @@
  */
 
 import { Mint, Wallet, MintQuoteState } from '@cashu/cashu-ts';
+import { put, get } from '@vercel/blob';
 
 // ── Mint configs ────────────────────────────────────────────────────
 const TESTNET_MINT_URL = 'https://testnut.cashu.space';
@@ -30,6 +31,7 @@ const MINTS = [
   { url: 'https://mint.macadamia.cash',        name: 'Macadamia' },
   { url: 'https://mint.0xchat.com',            name: '0xChat' },
   { url: 'https://mint.lnvoltz.com',           name: 'LN Voltz' },
+  { url: 'https://cashu.boats',                name: 'Kinda Reckless Mint' },
 ];
 
 function getMintsForMode(mode) {
@@ -56,16 +58,50 @@ let proofs = new Map();    // url → Proof[]
 let initialized = false;
 let initPromise = null;
 
+// ── Blob persistence ────────────────────────────────────────────────
+// Proofs ARE the money — losing them = losing funds. Save to Vercel Blob
+// after every mutation so cold starts don't wipe balances.
+const PROOFS_BLOB_KEY = 'wallet/proofs.json';
+
+async function saveProofsToBlob() {
+  try {
+    const data = {};
+    for (const [url, ps] of proofs) {
+      if (ps.length > 0) data[url] = ps;
+    }
+    await put(PROOFS_BLOB_KEY, JSON.stringify({ mode: currentMode, proofs: data }), {
+      access: 'public',
+      addRandomSuffix: false,
+    });
+  } catch (err) {
+    console.error('[Wallet] Failed to save proofs to Blob:', err.message);
+  }
+}
+
+async function loadProofsFromBlob() {
+  try {
+    const response = await get(PROOFS_BLOB_KEY, { access: 'public' });
+    if (!response) return null;
+    const text = await response.text();
+    return JSON.parse(text);
+  } catch (err) {
+    console.warn('[Wallet] No saved proofs found:', err.message);
+    return null;
+  }
+}
+
 function mintName(url) {
   const entry = MINTS.find((m) => m.url === url);
   return entry?.name ?? url;
 }
 
 async function ensureInit(mode, mintConfigs) {
-  if (initialized && mode === currentMode) return;
+  // Allow reinit if new mintConfigs are provided (NIP-87 discovered new mints)
+  const hasNewMints = mintConfigs && mintConfigs.some((c) => !wallets.has(c.url));
+  if (initialized && mode === currentMode && !hasNewMints) return;
 
   // If already initializing, wait for it
-  if (initPromise && mode === currentMode) {
+  if (initPromise && mode === currentMode && !hasNewMints) {
     await initPromise;
     return;
   }
@@ -74,20 +110,36 @@ async function ensureInit(mode, mintConfigs) {
   const configs = mintConfigs || getMintsForMode(mode);
 
   initPromise = (async () => {
-    wallets = new Map();
+    const oldWallets = wallets;
     const oldProofs = proofs;
+    wallets = new Map();
     proofs = new Map();
 
+    // On cold start, restore proofs from Blob storage
+    let savedProofs = {};
+    if (oldProofs.size === 0) {
+      const saved = await loadProofsFromBlob();
+      if (saved && saved.proofs) {
+        savedProofs = saved.proofs;
+        console.log(`[Wallet] Restored proofs from Blob for ${Object.keys(savedProofs).length} mints`);
+      }
+    }
+
     const tasks = configs.map(async (cfg) => {
+      // Reuse existing wallet instance if we have one
+      if (oldWallets.has(cfg.url)) {
+        wallets.set(cfg.url, oldWallets.get(cfg.url));
+        proofs.set(cfg.url, oldProofs.get(cfg.url) || savedProofs[cfg.url] || []);
+        return;
+      }
       try {
         const mint = new Mint(cfg.url);
         const wallet = new Wallet(mint);
         await wallet.loadMint();
         wallets.set(cfg.url, wallet);
-        // Preserve existing proofs if we have them
-        proofs.set(cfg.url, oldProofs.get(cfg.url) || []);
+        proofs.set(cfg.url, oldProofs.get(cfg.url) || savedProofs[cfg.url] || []);
       } catch (err) {
-        console.warn(`[Wallet] Failed to init ${cfg.name}:`, err.message);
+        console.warn(`[Wallet] Failed to init ${cfg.name || cfg.url}:`, err.message);
       }
     });
 
@@ -179,13 +231,13 @@ export default async function handler(req, res) {
         const wallet = wallets.get(mintUrl);
         if (!wallet) return res.json({ ok: false, error: `No wallet for ${mintUrl}` });
 
-        // Poll up to 50 times (Vercel functions timeout at ~60s on free tier)
         for (let i = 0; i < 18; i++) {
           const status = await wallet.checkMintQuoteBolt11(quoteId);
           if (status.state === MintQuoteState.PAID || status.state === MintQuoteState.ISSUED) {
             const newProofs = await wallet.mintProofsBolt11(status.amount, quoteId);
             const existing = proofs.get(mintUrl) || [];
             proofs.set(mintUrl, [...existing, ...newProofs]);
+            await saveProofsToBlob();
             const credited = newProofs.reduce((s, p) => s + p.amount, 0);
             return res.json({ ok: true, data: { credited } });
           }
@@ -220,6 +272,7 @@ export default async function handler(req, res) {
             const { keep, send: toSend } = wallet.selectProofsToSend(mintProofs, needed, true);
             const meltResult = await wallet.meltProofsBolt11(meltQuote, toSend);
             proofs.set(url, [...keep, ...meltResult.change]);
+            await saveProofsToBlob();
             const paid = meltResult.quote.state === 'PAID';
             return res.json({ ok: true, data: { paid, preimage: meltResult.quote.payment_preimage, usedMints: [url] } });
           } catch (err) {
@@ -236,7 +289,7 @@ export default async function handler(req, res) {
 
         const sourceWallet = wallets.get(from);
         const targetWallet = wallets.get(to);
-        if (!sourceWallet || !targetWallet) return res.json({ ok: false, error: 'Wallet not found for source or target' });
+        if (!sourceWallet || !targetWallet) return res.json({ ok: false, error: `Wallet not found for ${!sourceWallet ? from : to}` });
 
         try {
           const mintQuote = await targetWallet.createMintQuoteBolt11(migAmount);
@@ -249,6 +302,7 @@ export default async function handler(req, res) {
           const newProofs = await targetWallet.mintProofsBolt11(migAmount, mintQuote.quote);
           const existing = proofs.get(to) || [];
           proofs.set(to, [...existing, ...newProofs]);
+          await saveProofsToBlob();
 
           return res.json({
             ok: true,
