@@ -57,11 +57,11 @@ async function fetchWithRetry(
 }
 
 // ── CORS proxy helper ────────────────────────────────────────────────
-// Route mint requests through Vite's CORS proxy to avoid browser blocks.
-// https://example.com/v1/info → /cashu-proxy/example.com/v1/info
+// Route mint requests through the server-side CORS proxy.
+// https://example.com/v1/info → /api/cashu-proxy?target=example.com/v1/info
 function proxyMintUrl(mintUrl: string, path: string): string {
   const host = mintUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  return `/cashu-proxy/${host}${path}`;
+  return `/api/cashu-proxy?target=${encodeURIComponent(host + path)}`;
 }
 
 // ── Cashu Mint Probing ───────────────────────────────────────────────

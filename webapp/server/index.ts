@@ -1,5 +1,5 @@
 import express from 'express';
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response } from 'express';
 import path from 'path';
 import { walletEngine } from './walletEngine.js';
 import { MINTS, getMintsForMode, ALLIUM_API_KEY } from './config.js';
@@ -122,54 +122,46 @@ app.post('/api/allium', async (req: Request, res: Response) => {
 });
 
 // ── CORS proxy for mint probing ─────────────────────────────────────
-// Browser trust engine needs to probe mints (CORS blocked).
-// /cashu-proxy/testnut.cashu.space/v1/info → https://testnut.cashu.space/v1/info
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-app.use('/cashu-proxy', (req: Request, res: Response, _next: NextFunction) => {
-  const target = 'https://' + req.url.slice(1); // strip leading /
+// /api/cashu-proxy?target=testnut.cashu.space/v1/info → https://testnut.cashu.space/v1/info
+app.all('/api/cashu-proxy', async (req: Request, res: Response) => {
+  const targetParam = req.query.target as string;
+  if (!targetParam) {
+    res.status(400).json({ error: 'target query param required' });
+    return;
+  }
+  const target = 'https://' + targetParam;
 
   if (req.method === 'OPTIONS') {
     res.set({
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization',
-      'Access-Control-Max-Age': '86400',
     });
     res.sendStatus(204);
     return;
   }
 
-  // Collect body for POST requests
-  const chunks: Buffer[] = [];
-  req.on('data', (chunk: Buffer) => chunks.push(chunk));
-  req.on('end', async () => {
-    const body = Buffer.concat(chunks).toString();
-    try {
-      const fetchOpts: RequestInit = {
-        method: req.method || 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, text/plain, */*',
-        },
-      };
-      if (body && req.method !== 'GET' && req.method !== 'HEAD') {
-        fetchOpts.body = body;
-      }
-
-      const response = await fetch(target, fetchOpts);
-      const responseBody = await response.arrayBuffer();
-
-      res.set({
-        'Content-Type': response.headers.get('content-type') || 'application/json',
-        'Access-Control-Allow-Origin': '*',
-      });
-      res.status(response.status).send(Buffer.from(responseBody));
-    } catch (err) {
-      console.error(`[cashu-proxy] ${req.method} ${target} →`, err);
-      res.set({ 'Access-Control-Allow-Origin': '*' });
-      res.status(502).json({ error: String(err) });
+  try {
+    const fetchOpts: RequestInit = {
+      method: req.method || 'GET',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/plain, */*' },
+    };
+    if (req.body && req.method !== 'GET' && req.method !== 'HEAD') {
+      fetchOpts.body = JSON.stringify(req.body);
     }
-  });
+
+    const response = await fetch(target, fetchOpts);
+    const responseBody = await response.arrayBuffer();
+
+    res.set({
+      'Content-Type': response.headers.get('content-type') || 'application/json',
+      'Access-Control-Allow-Origin': '*',
+    });
+    res.status(response.status).send(Buffer.from(responseBody));
+  } catch (err) {
+    console.error(`[cashu-proxy] ${req.method} ${target} →`, err);
+    res.status(502).json({ error: String(err) });
+  }
 });
 
 // ── Dev: Vite as middleware / Prod: static serving ──────────────────
