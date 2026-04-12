@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@cashu/cashu-ts": "^3.6.3",
+    "@vercel/blob": "^2.3.3",
     "express": "^5.2.1",
     "lightweight-charts": "^5.1.0",
     "lucide-react": "^1.8.0",
