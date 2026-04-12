@@ -11,26 +11,38 @@ export interface Failure     { ok: false; error: string }
 export type Result<T> = Success<T> | Failure;
 
 async function post<T>(path: string, body: unknown): Promise<Result<T>> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const json: Result<T> = await res.json();
-  return json;
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      return { ok: false, error: `Server error: ${res.status} ${res.statusText}` };
+    }
+    const json: Result<T> = await res.json();
+    return json;
+  } catch (err) {
+    return { ok: false, error: `Network error: ${String(err)}` };
+  }
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  const json: T = await res.json();
-  return json;
+async function get<T>(path: string, fallback: T): Promise<T> {
+  try {
+    const res = await fetch(path);
+    if (!res.ok) return fallback;
+    const json: T = await res.json();
+    return json;
+  } catch {
+    return fallback;
+  }
 }
 
 // ── Public API ──────────────────────────────────────────────────────
 
 export const walletApi = {
   async getMode(): Promise<DemoMode> {
-    const { mode } = await get<{ mode: DemoMode }>('/api/wallet/mode');
+    const { mode } = await get<{ mode: DemoMode }>('/api/wallet/mode', { mode: 'mutinynet' });
     return mode;
   },
 
@@ -39,7 +51,7 @@ export const walletApi = {
   },
 
   async getAllBalances(): Promise<{ balances: WalletBalance[]; total: number }> {
-    return get('/api/wallet/balances');
+    return get('/api/wallet/balances', { balances: [], total: 0 });
   },
 
   async smartReceive(
