@@ -13,7 +13,6 @@ const VIEW_LABELS: Record<AppView, string> = {
 };
 
 const DEMO_MODE_STYLE = {
-  mock: { label: 'MOCK', color: '#a855f7', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.3)' },
   testnet: { label: 'TESTNET', color: '#d29922', bg: 'rgba(210,153,34,0.12)', border: 'rgba(210,153,34,0.3)' },
   mainnet: { label: 'MAINNET', color: '#3fb950', bg: 'rgba(63,185,80,0.12)', border: 'rgba(63,185,80,0.3)' },
 } as const;

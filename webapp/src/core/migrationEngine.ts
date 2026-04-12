@@ -8,7 +8,7 @@
  * - Actual wallet migration via Lightning (walletEngine.migrate)
  */
 
-import type { MintScore, MigrationEvent, WalletBalance, DemoMode } from '../state/types';
+import type { MintScore, MigrationEvent, WalletBalance } from '../state/types';
 import {
   MIGRATION_THRESHOLD,
   MIGRATION_HYSTERESIS,
@@ -125,27 +125,10 @@ export function computeMigrationPlans(
 /**
  * Execute a migration plan using the wallet engine.
  * Returns the completed MigrationEvent or null on failure.
- *
- * @param demoMode - Optional defense-in-depth guard. If 'mock', returns a
- *   simulated event without touching the wallet engine (the wallet engine
- *   also guards internally, so this is belt-and-suspenders).
  */
 export async function executeMigration(
   plan: MigrationPlan,
-  demoMode?: DemoMode,
 ): Promise<MigrationEvent | null> {
-  if (demoMode === 'mock') {
-    return {
-      id: crypto.randomUUID(),
-      fromMint: plan.fromName,
-      toMint: plan.toName,
-      amount: plan.amount,
-      reason: plan.reason,
-      timestamp: new Date().toISOString(),
-      status: 'completed',
-    };
-  }
-
   const result = await walletEngine.migrate(
     plan.fromMint,
     plan.toMint,

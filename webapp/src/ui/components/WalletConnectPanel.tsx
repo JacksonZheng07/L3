@@ -21,7 +21,6 @@ export default function WalletConnectPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isMock = demoMode === 'mock';
   const mnemonicWords = mnemonic.trim().split(/\s+/).filter(Boolean);
   const mnemonicOk = mnemonic.trim() === '' || validateMnemonicLength(mnemonic);
 
@@ -30,7 +29,7 @@ export default function WalletConnectPanel() {
     setLoading(true);
     try {
       let seed: Uint8Array | undefined;
-      if (!isMock && mnemonic.trim() !== '') {
+      if (mnemonic.trim() !== '') {
         if (!validateMnemonicLength(mnemonic)) {
           setError('Mnemonic must be 12, 18, or 24 words.');
           return;
@@ -60,9 +59,7 @@ export default function WalletConnectPanel() {
         <span
           className="text-[9px] font-mono px-1.5 py-0.5 rounded border"
           style={
-            isMock
-              ? { background: 'rgba(168,85,247,0.1)', color: '#a855f7', borderColor: 'rgba(168,85,247,0.25)' }
-              : demoMode === 'testnet'
+            demoMode === 'testnet'
               ? { background: 'rgba(210,153,34,0.1)', color: '#d29922', borderColor: 'rgba(210,153,34,0.25)' }
               : { background: 'rgba(63,185,80,0.1)', color: '#3fb950', borderColor: 'rgba(63,185,80,0.25)' }
           }
@@ -83,7 +80,7 @@ export default function WalletConnectPanel() {
             Network Mode
           </div>
           <div className="flex gap-2">
-            {(['mock', 'testnet', 'mainnet'] as const).map((m) => (
+            {(['testnet', 'mainnet'] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => dispatch({ type: 'SET_DEMO_MODE', mode: m })}
@@ -98,71 +95,64 @@ export default function WalletConnectPanel() {
               </button>
             ))}
           </div>
-          {isMock && (
-            <p className="mt-2 text-[10px] font-mono text-[#a855f7]/70">
-              Mock mode uses simulated proofs — no real Lightning payments.
-            </p>
-          )}
         </div>
 
-        {/* Mnemonic input (testnet / mainnet only) */}
-        {!isMock && (
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-[10px] font-mono uppercase tracking-widest text-[#8b949e]/60">
-                Seed Phrase <span className="normal-case tracking-normal">(optional — enables deterministic tokens)</span>
-              </div>
-              <button
-                onClick={() => setShowMnemonic((v) => !v)}
-                className="text-[#8b949e] hover:text-[#c9d1d9] transition-colors"
-              >
-                {showMnemonic ? <EyeOff size={12} /> : <Eye size={12} />}
-              </button>
+        {/* Mnemonic input */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-[#8b949e]/60">
+              Seed Phrase <span className="normal-case tracking-normal">(optional — enables deterministic tokens)</span>
             </div>
-            <textarea
-              rows={3}
-              placeholder="word1 word2 word3 … (12, 18, or 24 words)"
-              value={mnemonic}
-              onChange={(e) => setMnemonic(e.target.value)}
-              className="w-full text-sm font-mono p-3 rounded-lg border bg-[#0d1117] text-[#c9d1d9] placeholder-[#8b949e]/30 focus:outline-none transition-colors resize-none"
-              style={{
-                borderColor: !mnemonicOk ? 'rgba(248,81,73,0.5)' : mnemonic ? 'rgba(88,166,255,0.4)' : '#30363d',
-                filter: !showMnemonic && mnemonic ? 'blur(4px)' : 'none',
-              }}
-            />
-            <div className="flex items-center justify-between mt-1">
-              {!mnemonicOk && (
-                <span className="text-[10px] font-mono text-[#f85149]">
-                  Must be 12, 18, or 24 words (currently {mnemonicWords.length})
-                </span>
-              )}
-              {mnemonicOk && mnemonic && (
-                <span className="text-[10px] font-mono text-[#3fb950]">
-                  {mnemonicWords.length} words ✓
-                </span>
-              )}
-              {!mnemonic && (
-                <span className="text-[10px] font-mono text-[#8b949e]/50">
-                  Leave blank to use random ecash secrets
-                </span>
-              )}
-              <span />
-            </div>
-            {/* Security note */}
-            <div className="mt-2 flex items-start gap-2 rounded-lg border border-[#d29922]/20 bg-[#d29922]/05 p-3">
-              <AlertTriangle size={12} className="text-[#d29922] shrink-0 mt-0.5" />
-              <p className="text-[10px] font-mono text-[#d29922]/80 leading-relaxed">
-                Seed phrase is held in memory only and never written to storage or transmitted.
-                Use a throwaway testnet seed for demos.
-              </p>
-            </div>
+            <button
+              onClick={() => setShowMnemonic((v) => !v)}
+              className="text-[#8b949e] hover:text-[#c9d1d9] transition-colors"
+            >
+              {showMnemonic ? <EyeOff size={12} /> : <Eye size={12} />}
+            </button>
           </div>
-        )}
+          <textarea
+            rows={3}
+            placeholder="word1 word2 word3 … (12, 18, or 24 words)"
+            value={mnemonic}
+            onChange={(e) => setMnemonic(e.target.value)}
+            className="w-full text-sm font-mono p-3 rounded-lg border bg-[#0d1117] text-[#c9d1d9] placeholder-[#8b949e]/30 focus:outline-none transition-colors resize-none"
+            style={{
+              borderColor: !mnemonicOk ? 'rgba(248,81,73,0.5)' : mnemonic ? 'rgba(88,166,255,0.4)' : '#30363d',
+              filter: !showMnemonic && mnemonic ? 'blur(4px)' : 'none',
+            }}
+          />
+          <div className="flex items-center justify-between mt-1">
+            {!mnemonicOk && (
+              <span className="text-[10px] font-mono text-[#f85149]">
+                Must be 12, 18, or 24 words (currently {mnemonicWords.length})
+              </span>
+            )}
+            {mnemonicOk && mnemonic && (
+              <span className="text-[10px] font-mono text-[#3fb950]">
+                {mnemonicWords.length} words ✓
+              </span>
+            )}
+            {!mnemonic && (
+              <span className="text-[10px] font-mono text-[#8b949e]/50">
+                Leave blank to use random ecash secrets
+              </span>
+            )}
+            <span />
+          </div>
+          {/* Security note */}
+          <div className="mt-2 flex items-start gap-2 rounded-lg border border-[#d29922]/20 bg-[#d29922]/05 p-3">
+            <AlertTriangle size={12} className="text-[#d29922] shrink-0 mt-0.5" />
+            <p className="text-[10px] font-mono text-[#d29922]/80 leading-relaxed">
+              Seed phrase is held in memory only and never written to storage or transmitted.
+              Use a throwaway testnet seed for demos.
+            </p>
+          </div>
+        </div>
 
         {/* Connect button */}
         <button
           onClick={handleConnect}
-          disabled={loading || (!mnemonicOk && !isMock)}
+          disabled={loading || !mnemonicOk}
           className="w-full py-2.5 text-sm font-mono rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           style={{ background: 'rgba(88,166,255,0.1)', borderColor: 'rgba(88,166,255,0.3)', color: '#58a6ff' }}
         >

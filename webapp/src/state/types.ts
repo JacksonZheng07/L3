@@ -6,11 +6,13 @@ export interface MintConfig {
 
 export interface SignalResult {
   name: string;
-  value: number;       // 0.0 to 1.0
+  value: number;       // 0.0 to 1.0 (point estimate μ)
   weight: number;
   contribution: number; // value * weight
   source: 'allium' | 'direct';
   explanation: string;
+  /** Uncertainty — std dev of the true signal value (0.0 = certain, 0.5 = maximum uncertainty) */
+  sigma: number;
   rawData?: Record<string, unknown>;
 }
 
@@ -19,9 +21,30 @@ export interface MintScore {
   name: string;
   isAnonymous: boolean;
   signals: SignalResult[];
-  compositeScore: number; // 0-100
-  grade: 'safe' | 'warning' | 'critical';
-  allocationPct: number;
+
+  // ── Point estimate ──────────────────────────────────────────────
+  compositeScore: number;    // μ of the score distribution, 0-100
+  scoreSigma: number;        // σ of the composite score, 0-100 (higher = less certain)
+
+  // ── Probabilistic grade ─────────────────────────────────────────
+  /** P(true score ≥ 75) — probability this mint is genuinely "safe" */
+  pSafe: number;
+  /** P(50 ≤ true score < 75) */
+  pWarning: number;
+  /** P(true score < 50) — probability this mint is genuinely "critical" */
+  pCritical: number;
+  grade: 'safe' | 'warning' | 'critical'; // argmax of the three probabilities
+
+  // ── Momentum ────────────────────────────────────────────────────
+  /** Raw score Δ since the previous scoring cycle (+ = improving) */
+  velocity: number;
+  /** Momentum-adjusted score: compositeScore + λ × velocity */
+  adjustedScore: number;
+
+  // ── Allocation ──────────────────────────────────────────────────
+  allocationPct: number;      // Sharpe-weighted allocation (capped at MAX_ALLOCATION)
+  kellyAllocation: number;    // Kelly-criterion allocation (for comparison)
+
   scoredAt: string;
   isOnline: boolean;
   latencyMs: number;
@@ -91,7 +114,7 @@ export interface WalletConnection {
 }
 
 // Demo environment mode
-export type DemoMode = 'mock' | 'testnet' | 'mainnet';
+export type DemoMode = 'testnet' | 'mainnet';
 
 // Fedimint entity wallets
 export interface EntityWallet {

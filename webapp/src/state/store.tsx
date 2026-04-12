@@ -24,11 +24,11 @@ const initialState: AppState = {
   lastScoredAt: null,
   currentView: 'dashboard',
   selectedMint: null,
-  automationMode: 'alert',
+  automationMode: 'auto',
   alerts: [],
   simulationActive: false,
   simulationScores: null,
-  demoMode: 'mock',
+  demoMode: 'testnet',
   entityWallets: [],
   federations: [],
 };
@@ -122,11 +122,6 @@ interface StoreContextType {
    * Resolves with a WalletConnection describing per-mint status.
    */
   connectWallet: (bip39seed?: Uint8Array) => Promise<WalletConnection>;
-  /**
-   * Manually move sats from one mint to another.
-   * Adds the resulting event to the migration log and refreshes balances.
-   */
-  manualTransfer: (fromUrl: string, toUrl: string, amount: number) => Promise<MigrationEvent | null>;
   /** Returns the effective scores (simulation overrides real when active) */
   effectiveScores: MintScore[];
 }
@@ -188,7 +183,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       );
 
       for (const plan of plans) {
-        const event = await executeMigration(plan, currentState.demoMode);
+        const event = await executeMigration(plan);
         if (event) dispatch({ type: 'ADD_MIGRATION', event });
       }
 
@@ -207,17 +202,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const allMints = mintsRef.current;
     if (allMints.length === 0) return;
 
-    // In mock mode, probe all mints (read-only). In testnet/mainnet, only relevant mints.
-    const mints = stateRef.current.demoMode === 'mock'
-      ? allMints
-      : getMintsForMode(allMints, stateRef.current.demoMode);
+    const mints = getMintsForMode(allMints, stateRef.current.demoMode);
 
     scoringRef.current = true;
     dispatch({ type: 'SET_SCORING', isScoring: true });
 
     try {
       const probeResults = await probeAllMints(mints);
-      const scores = await scoreAllMints(mints, probeResults, cachedKeysets.current);
+      const scores = await scoreAllMints(mints, probeResults, cachedKeysets.current, prevScoresRef.current);
 
       updateKeysetCache(scores);
 
@@ -254,7 +246,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const plan = plans.find((p) => p.fromName === mintName) ?? plans[0];
 
       if (plan) {
-        const event = await executeMigration(plan, stateRef.current.demoMode);
+        const event = await executeMigration(plan);
         if (event) dispatch({ type: 'ADD_MIGRATION', event });
       } else {
         dispatch({
@@ -297,32 +289,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshBalances]);
 
-  /** Manually transfer sats between two mints. */
-  const manualTransfer = useCallback(
-    async (fromUrl: string, toUrl: string, amount: number): Promise<MigrationEvent | null> => {
-      const currentState = stateRef.current;
-      const fromScore = currentState.scores.find((s) => s.url === fromUrl);
-      const toScore   = currentState.scores.find((s) => s.url === toUrl);
-
-      const plan = {
-        fromMint: fromUrl,
-        fromName: fromScore?.name ?? fromUrl,
-        toMint:   toUrl,
-        toName:   toScore?.name ?? toUrl,
-        amount,
-        reason: 'Manual transfer',
-      };
-
-      const event = await executeMigration(plan, currentState.demoMode);
-      if (event) {
-        dispatch({ type: 'ADD_MIGRATION', event });
-        refreshBalances();
-      }
-      return event;
-    },
-    [refreshBalances],
-  );
-
   const effectiveScores =
     state.simulationActive && state.simulationScores ? state.simulationScores : state.scores;
 
@@ -360,7 +326,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   return (
     <StoreContext.Provider
-      value={{ state, dispatch, runScoring, refreshBalances, setView, approveMigration, connectWallet, manualTransfer, effectiveScores }}
+      value={{ state, dispatch, runScoring, refreshBalances, setView, approveMigration, connectWallet, effectiveScores }}
     >
       {children}
     </StoreContext.Provider>

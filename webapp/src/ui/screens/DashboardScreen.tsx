@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../../state/store';
-import { selectPortfolioVaR, selectSingleMintVaR, selectSafePct } from '../../state/selectors';
+import { selectPortfolioRisk, selectDiversificationBenefit, selectSafePct } from '../../state/selectors';
 import KpiCard from '../components/KpiCard';
 import ScoreChart from '../components/ScoreChart';
 import AllocationPie from '../components/AllocationPie';
@@ -15,18 +15,16 @@ export default function DashboardScreen() {
 
   const [showCurves, setShowCurves] = useState(false);
 
-  const portfolioVaR = selectPortfolioVaR(effectiveScores, totalBalance);
-  const singleMintVaR = selectSingleMintVaR(effectiveScores, totalBalance);
-  const varReductionPct =
-    singleMintVaR > 0 ? ((singleMintVaR - portfolioVaR) / singleMintVaR) * 100 : 0;
-  const safePct = selectSafePct(effectiveScores);
+  const risk     = selectPortfolioRisk(effectiveScores, totalBalance);
+  const divBenefit = selectDiversificationBenefit(effectiveScores, totalBalance);
+  const safePct  = selectSafePct(effectiveScores);
 
   const varGrade =
     totalBalance === 0
       ? 'safe'
-      : portfolioVaR / totalBalance > 0.1
+      : risk.var95 / totalBalance > 0.1
       ? 'critical'
-      : portfolioVaR / totalBalance > 0.05
+      : risk.var95 / totalBalance > 0.05
       ? 'warning'
       : 'safe';
 
@@ -52,11 +50,11 @@ export default function DashboardScreen() {
       {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
-          label="Portfolio VaR"
-          value={totalBalance > 0 ? `${Math.round(portfolioVaR).toLocaleString()} sats` : '—'}
+          label="VaR 95% (Gaussian)"
+          value={totalBalance > 0 ? `${Math.round(risk.var95).toLocaleString()} sats` : '—'}
           subValue={
-            varReductionPct > 0
-              ? `${varReductionPct.toFixed(1)}% reduction vs single-mint`
+            totalBalance > 0
+              ? `CVaR: ${Math.round(risk.cvar95).toLocaleString()} · div. benefit ${divBenefit.toFixed(1)}%`
               : 'Set a balance to compute'
           }
           grade={varGrade}

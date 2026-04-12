@@ -4,6 +4,7 @@
  */
 
 import type { MintScore, WalletBalance } from './types';
+import { portfolioLossDistribution, gaussianVaR, gaussianCVaR } from '../lib/stats';
 
 // ── Entity Wallet derivation ────────────────────────────────────────────
 
@@ -69,18 +70,16 @@ export interface FederationGroup {
 
 /** Derive federation-like groupings from scored mints by grade tier */
 export function selectFederationGroups(scores: MintScore[]): FederationGroup[] {
-  const safeMints = scores.filter((s) => s.grade === 'safe');
-  const warningMints = scores.filter((s) => s.grade === 'warning');
+  const safeMints     = scores.filter((s) => s.grade === 'safe');
+  const warningMints  = scores.filter((s) => s.grade === 'warning');
   const criticalMints = scores.filter((s) => s.grade === 'critical');
 
   const groups: FederationGroup[] = [];
 
   if (safeMints.length > 0) {
     groups.push({
-      id: 'safe-cluster',
-      name: 'Safe Mint Cluster',
-      description:
-        'Mints scoring >= 75. In a Fedimint model, these would form a high-trust federation.',
+      id: 'safe-cluster', name: 'Safe Mint Cluster',
+      description: 'Mints scoring ≥ 75 with high pSafe. In Fedimint, form a high-trust federation.',
       mints: safeMints,
       avgScore: safeMints.reduce((s, m) => s + m.compositeScore, 0) / safeMints.length,
       status: 'healthy',
@@ -90,10 +89,8 @@ export function selectFederationGroups(scores: MintScore[]): FederationGroup[] {
 
   if (warningMints.length > 0) {
     groups.push({
-      id: 'warning-cluster',
-      name: 'Warning Mint Cluster',
-      description:
-        'Mints scoring 50–74. Require monitoring. Federation threshold would need to be higher.',
+      id: 'warning-cluster', name: 'Warning Mint Cluster',
+      description: 'Mints in warning band. Require monitoring; higher federation threshold needed.',
       mints: warningMints,
       avgScore: warningMints.reduce((s, m) => s + m.compositeScore, 0) / warningMints.length,
       status: 'degraded',
@@ -103,10 +100,8 @@ export function selectFederationGroups(scores: MintScore[]): FederationGroup[] {
 
   if (criticalMints.length > 0) {
     groups.push({
-      id: 'critical-cluster',
-      name: 'Critical Mints (Excluded)',
-      description:
-        'Mints scoring < 50. Zero allocation. Would be excluded from any federation.',
+      id: 'critical-cluster', name: 'Critical Mints (Excluded)',
+      description: 'Zero allocation. Would be excluded from any federation.',
       mints: criticalMints,
       avgScore: criticalMints.reduce((s, m) => s + m.compositeScore, 0) / criticalMints.length,
       status: 'offline',
@@ -119,26 +114,91 @@ export function selectFederationGroups(scores: MintScore[]): FederationGroup[] {
 
 // ── Portfolio analytics ─────────────────────────────────────────────────
 
-/** Compute the portfolio Value-at-Risk in sats */
-export function selectPortfolioVaR(scores: MintScore[], totalBalance: number): number {
-  return scores.reduce((sum, mint) => {
-    const exposure = (mint.allocationPct / 100) * totalBalance;
-    return sum + exposure * (1 - mint.compositeScore / 100);
-  }, 0);
+export interface PortfolioRisk {
+  /** Expected loss (mean of the loss distribution), in sats */
+  meanLoss: number;
+  /** Standard deviation of the loss distribution, in sats */
+  sigmaLoss: number;
+  /** 95% VaR — loss level exceeded with 5% probability */
+  var95: number;
+  /** 99% VaR */
+  var99: number;
+  /** 95% CVaR / Expected Shortfall — average loss *given* exceeding VaR_95 */
+  cvar95: number;
 }
 
-/** Compute the VaR if all funds were in the single best mint */
-export function selectSingleMintVaR(scores: MintScore[], totalBalance: number): number {
-  if (scores.length === 0) return totalBalance;
+/**
+ * Compute the portfolio loss distribution and VaR/CVaR using a Gaussian model.
+ *
+ * Each mint contributes:
+ *   E[loss_i]   = exposure_i × (1 − μ_i / 100)
+ *   Var[loss_i] = (exposure_i / 100)² × σ_i²
+ *
+ * Portfolio loss = sum of per-mint losses (assumes cross-mint independence).
+ */
+export function selectPortfolioRisk(scores: MintScore[], totalBalance: number): PortfolioRisk {
+  const mints = scores.map((s) => ({
+    allocationPct: s.allocationPct,
+    scoreMu:    s.compositeScore,
+    scoreSigma: Math.max(s.scoreSigma ?? 5, 2),
+  }));
+
+  const { meanLoss, sigmaLoss } = portfolioLossDistribution(mints, totalBalance);
+  return {
+    meanLoss,
+    sigmaLoss,
+    var95:  gaussianVaR(meanLoss, sigmaLoss, 0.95),
+    var99:  gaussianVaR(meanLoss, sigmaLoss, 0.99),
+    cvar95: gaussianCVaR(meanLoss, sigmaLoss, 0.95),
+  };
+}
+
+/**
+ * VaR if all funds were concentrated in the single highest-scoring mint.
+ * Used to quantify the diversification benefit.
+ */
+export function selectSingleMintRisk(scores: MintScore[], totalBalance: number): PortfolioRisk {
+  if (scores.length === 0) {
+    return { meanLoss: totalBalance, sigmaLoss: 0, var95: totalBalance, var99: totalBalance, cvar95: totalBalance };
+  }
   const best = scores.reduce((b, m) => (m.compositeScore > b.compositeScore ? m : b));
-  return totalBalance * (1 - best.compositeScore / 100);
+  const mints = [{ allocationPct: 100, scoreMu: best.compositeScore, scoreSigma: Math.max(best.scoreSigma ?? 5, 2) }];
+  const { meanLoss, sigmaLoss } = portfolioLossDistribution(mints, totalBalance);
+  return {
+    meanLoss,
+    sigmaLoss,
+    var95:  gaussianVaR(meanLoss, sigmaLoss, 0.95),
+    var99:  gaussianVaR(meanLoss, sigmaLoss, 0.99),
+    cvar95: gaussianCVaR(meanLoss, sigmaLoss, 0.95),
+  };
 }
 
-/** Group scores by grade — safe/warning/critical */
+/** Reduction in 95% VaR achieved by diversification vs single-mint allocation */
+export function selectDiversificationBenefit(scores: MintScore[], totalBalance: number): number {
+  if (totalBalance === 0) return 0;
+  const portfolio  = selectPortfolioRisk(scores, totalBalance);
+  const singleMint = selectSingleMintRisk(scores, totalBalance);
+  if (singleMint.var95 <= 0) return 0;
+  return ((singleMint.var95 - portfolio.var95) / singleMint.var95) * 100;
+}
+
+// ── Convenience wrappers (backward compat with DashboardScreen) ─────────
+
+/** 95% VaR in sats (Gaussian) */
+export function selectPortfolioVaR(scores: MintScore[], totalBalance: number): number {
+  return selectPortfolioRisk(scores, totalBalance).var95;
+}
+
+/** 95% VaR if all funds in single best mint */
+export function selectSingleMintVaR(scores: MintScore[], totalBalance: number): number {
+  return selectSingleMintRisk(scores, totalBalance).var95;
+}
+
+/** Group scores by grade */
 export function selectScoresByGrade(scores: MintScore[]) {
   return {
-    safe: scores.filter((s) => s.grade === 'safe'),
-    warning: scores.filter((s) => s.grade === 'warning'),
+    safe:     scores.filter((s) => s.grade === 'safe'),
+    warning:  scores.filter((s) => s.grade === 'warning'),
     critical: scores.filter((s) => s.grade === 'critical'),
   };
 }

@@ -9,9 +9,9 @@ import {
   Loader,
   CheckCircle,
   XCircle,
-  ChevronDown,
   RefreshCw,
   Zap,
+  ShieldCheck,
 } from 'lucide-react';
 
 type ReceiveStep = 'form' | 'invoice' | 'polling' | 'done' | 'failed';
@@ -20,13 +20,12 @@ const QUICK_AMOUNTS = [100, 500, 1_000, 5_000, 10_000];
 
 export default function ReceivePanel() {
   const { state, effectiveScores, refreshBalances } = useStore();
-  const { balances, demoMode, discoveredMints } = state;
 
-  const [mintUrl, setMintUrl]     = useState('');
   const [amountStr, setAmountStr] = useState('');
   const [step, setStep]           = useState<ReceiveStep>('form');
   const [invoice, setInvoice]     = useState('');
   const [quoteId, setQuoteId]     = useState('');
+  const [mintUrl, setMintUrl]     = useState('');
   const [credited, setCredited]   = useState(0);
   const [copied, setCopied]       = useState(false);
   const [error, setError]         = useState<string | null>(null);
@@ -36,22 +35,23 @@ export default function ReceivePanel() {
   useEffect(() => () => { pollRef.current = false; }, []);
 
   const amount = parseInt(amountStr.replace(/,/g, ''), 10);
-  const canGenerate = mintUrl && !isNaN(amount) && amount > 0 && step === 'form';
+  const canGenerate = !isNaN(amount) && amount > 0 && step === 'form';
 
-  // All known mints (even with zero balance) as receive targets
-  const mintOptions = effectiveScores.length > 0
-    ? effectiveScores
-    : discoveredMints.map((m) => ({ url: m.url, name: m.name, grade: 'warning' as const, compositeScore: 0, isOnline: false }));
+  // Find the best mint that would be auto-selected
+  const bestMint = effectiveScores
+    .filter((s) => s.isOnline && s.grade !== 'critical')
+    .sort((a, b) => b.compositeScore - a.compositeScore)[0] ?? null;
 
   async function handleGenerate() {
     setError(null);
-    const result = await walletEngine.receive(mintUrl, amount);
+    const result = await walletEngine.smartReceive(amount, effectiveScores);
     if (!result.ok) {
       setError(result.error);
       return;
     }
     setInvoice(result.data.request);
     setQuoteId(result.data.quote);
+    setMintUrl(result.data.mintUrl);
     setStep('invoice');
   }
 
@@ -91,13 +91,13 @@ export default function ReceivePanel() {
     setStep('form');
     setInvoice('');
     setQuoteId('');
+    setMintUrl('');
     setCredited(0);
     setError(null);
     pollRef.current = false;
   }
 
-  const mintForUrl = (url: string) =>
-    mintOptions.find((m) => m.url === url) ?? null;
+  const selectedMintScore = effectiveScores.find((s) => s.url === mintUrl);
 
   return (
     <div
@@ -126,44 +126,29 @@ export default function ReceivePanel() {
         {/* ── Step 1: Form ── */}
         {step === 'form' && (
           <>
-            {/* Mint selector */}
-            <div>
-              <div className="text-[9px] font-mono uppercase tracking-widest text-[#8b949e]/60 mb-1.5">
-                Receive into mint
-              </div>
-              <div className="relative">
-                <select
-                  value={mintUrl}
-                  onChange={(e) => setMintUrl(e.target.value)}
-                  className="w-full appearance-none text-xs font-mono pl-3 pr-8 py-2 rounded-lg border border-[#30363d] bg-[#0d1117] text-[#c9d1d9] focus:outline-none focus:border-[#3fb950]/50 transition-colors"
-                >
-                  <option value="">Select mint…</option>
-                  {mintOptions.map((m) => {
-                    const bal = balances.find((b) => b.mintUrl === m.url);
-                    return (
-                      <option key={m.url} value={m.url}>
-                        {m.name}{bal ? ` — ${bal.balance.toLocaleString()} sats` : ''}
-                      </option>
-                    );
-                  })}
-                </select>
-                <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#8b949e] pointer-events-none" />
-              </div>
-              {mintUrl && (() => {
-                const m = mintForUrl(mintUrl);
-                if (!m || !('grade' in m) || !m.grade) return null;
-                const color = gradeColor(m.grade as 'safe' | 'warning' | 'critical');
-                return (
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
-                    <span className="text-[9px] font-mono" style={{ color }}>
-                      {(m.grade as string).toUpperCase()}
-                      {'compositeScore' in m && m.compositeScore ? ` · ${(m.compositeScore as number).toFixed(0)}` : ''}
+            {/* Auto-selected mint indicator */}
+            {bestMint && (
+              <div className="rounded-lg border border-[#21262d] bg-[#0d1117] px-4 py-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <ShieldCheck size={12} className="text-[#3fb950]" />
+                  <span className="text-[9px] font-mono uppercase tracking-widest text-[#8b949e]/60">
+                    Auto-selected mint
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-mono text-[#c9d1d9] font-semibold">{bestMint.name}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: gradeColor(bestMint.grade) }} />
+                    <span className="text-[9px] font-mono" style={{ color: gradeColor(bestMint.grade) }}>
+                      {bestMint.grade.toUpperCase()} · {bestMint.compositeScore.toFixed(0)}
                     </span>
                   </div>
-                );
-              })()}
-            </div>
+                </div>
+                <p className="text-[9px] font-mono text-[#8b949e]/60 mt-1">
+                  Highest-trust online mint. Funds will be rebalanced automatically.
+                </p>
+              </div>
+            )}
 
             {/* Amount */}
             <div>
@@ -232,9 +217,7 @@ export default function ReceivePanel() {
                 </button>
               </div>
               <p className="text-[10px] font-mono text-[#8b949e]/60 mt-1.5">
-                {demoMode === 'mock'
-                  ? 'Mock mode — click "Simulate Payment" below to instantly credit your wallet.'
-                  : 'Pay this invoice from any Lightning wallet to receive the ecash tokens.'}
+                Pay this invoice from any Lightning wallet to receive the ecash tokens.
               </p>
             </div>
 
@@ -246,7 +229,12 @@ export default function ReceivePanel() {
               </div>
               <div className="flex justify-between text-[10px] font-mono text-[#8b949e]">
                 <span>Mint</span>
-                <span className="text-[#c9d1d9]">{mintForUrl(mintUrl)?.name ?? mintUrl}</span>
+                <div className="flex items-center gap-1.5">
+                  {selectedMintScore && (
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: gradeColor(selectedMintScore.grade) }} />
+                  )}
+                  <span className="text-[#c9d1d9]">{selectedMintScore?.name ?? mintUrl}</span>
+                </div>
               </div>
             </div>
 
@@ -263,14 +251,14 @@ export default function ReceivePanel() {
                 style={{ background: 'rgba(88,166,255,0.1)', borderColor: 'rgba(88,166,255,0.3)', color: '#58a6ff' }}
               >
                 <Zap size={13} />
-                {demoMode === 'mock' ? 'Simulate Payment' : 'Check Payment Status'}
+                Check Payment Status
               </button>
             )}
 
             {step === 'polling' && (
               <div className="flex items-center justify-center gap-2 py-3 text-sm font-mono text-[#d29922]">
                 <Loader size={14} className="animate-spin" />
-                {demoMode === 'mock' ? 'Minting tokens…' : 'Waiting for payment…'}
+                Waiting for payment…
               </div>
             )}
           </>
@@ -288,7 +276,8 @@ export default function ReceivePanel() {
               </p>
               <p className="text-[10px] font-mono text-[#8b949e] mt-2">
                 Ecash tokens minted on{' '}
-                <span className="text-[#c9d1d9]">{mintForUrl(mintUrl)?.name ?? mintUrl}</span>
+                <span className="text-[#c9d1d9]">{selectedMintScore?.name ?? mintUrl}</span>
+                {' '}— funds will be distributed automatically.
               </p>
             </div>
             <button

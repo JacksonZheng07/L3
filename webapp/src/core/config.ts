@@ -8,8 +8,6 @@ export const TESTNET_MINT_URL = 'https://testnut.cashu.space';
 /** Return the subset of mints appropriate for the given demo mode. */
 export function getMintsForMode(allMints: MintConfig[], mode: DemoMode): MintConfig[] {
   switch (mode) {
-    case 'mock':
-      return allMints; // mock shows all mints in UI; tx ops are stubbed at engine level
     case 'testnet':
       return allMints.filter((m) => m.url === TESTNET_MINT_URL);
     case 'mainnet':
@@ -30,15 +28,12 @@ if (ALLIUM_API_KEY) {
 // Empty = anonymous operator (Allium signals score 0).
 
 export const MINTS: MintConfig[] = [
-  // All mints have operator addresses for Allium on-chain intelligence.
-  // Note: For demo purposes, addresses are associated Bitcoin wallets with
-  // rich on-chain history to demonstrate Allium data flow through the scoring pipeline.
-  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: ['1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'] },
-  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: ['3FHNBLobJnbCTFTVakh5TXmEneyf5PT61B'] },
-  { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: ['35hK24tcLEWcgNA4JxpvbkNkoAcDGqQPsP'] },
-  { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: ['385cR5DM96n1HvBDMzLHPYcw89fZAXULJP'] },
-  { url: 'https://mint.0xchat.com',                  name: '0xChat',             operatorAddresses: ['12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'] },
-  { url: 'https://mint.lnvoltz.com',                 name: 'LN Voltz',           operatorAddresses: ['1Kr6QSydW9bFQG1mXiPNNu6WpJGmUa9i1g'] },
+  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: [] },
+  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: [] },
+  { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: [] },
+  { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: [] },
+  { url: 'https://mint.0xchat.com',                  name: '0xChat',             operatorAddresses: [] },
+  { url: 'https://mint.lnvoltz.com',                 name: 'LN Voltz',           operatorAddresses: [] },
 ];
 
 export const WEIGHTS: Record<string, number> = {

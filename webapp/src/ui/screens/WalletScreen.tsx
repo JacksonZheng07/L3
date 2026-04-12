@@ -1,19 +1,13 @@
-import { useState } from 'react';
 import { useStore } from '../../state/store';
 import WalletConnectPanel from '../components/WalletConnectPanel';
-import TransferPanel from '../components/TransferPanel';
 import ReceivePanel from '../components/ReceivePanel';
 import MigrationLog from '../components/MigrationLog';
-import { Wallet, ArrowRightLeft, Download, History, RefreshCw } from 'lucide-react';
+import { Wallet, Download, History, RefreshCw } from 'lucide-react';
 import { gradeColor } from '../../lib/theme';
-
-type ActiveTab = 'receive' | 'transfer';
 
 export default function WalletScreen() {
   const { state, effectiveScores, refreshBalances } = useStore();
   const { balances, migrations } = state;
-
-  const [activeTab, setActiveTab] = useState<ActiveTab>('receive');
 
   const totalBalance = balances.reduce((s, b) => s + b.balance, 0);
 
@@ -87,41 +81,22 @@ export default function WalletScreen() {
         )}
       </div>
 
-      {/* ── Left: connect; Right: tabbed receive/transfer ── */}
+      {/* ── Left: connect; Right: receive ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
         {/* Wallet connect */}
         <WalletConnectPanel />
 
-        {/* Tabbed operations panel */}
+        {/* Receive panel */}
         <div
           className="rounded-xl border border-[#21262d] overflow-hidden"
           style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.3)' }}
         >
-          {/* Tab bar */}
-          <div className="flex bg-[#161b22] border-b border-[#21262d]">
-            {([
-              { id: 'receive',  label: 'Receive',  icon: Download },
-              { id: 'transfer', label: 'Transfer', icon: ArrowRightLeft },
-            ] as { id: ActiveTab; label: string; icon: typeof Download }[]).map(({ id, label, icon: Icon }) => (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                className="flex items-center gap-2 px-5 py-3 text-xs font-mono transition-all border-b-2 -mb-px"
-                style={
-                  activeTab === id
-                    ? { borderColor: '#58a6ff', color: '#58a6ff', background: 'rgba(88,166,255,0.05)' }
-                    : { borderColor: 'transparent', color: '#8b949e' }
-                }
-              >
-                <Icon size={12} />
-                {label}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 bg-[#161b22] px-5 py-3 border-b border-[#21262d]">
+            <Download size={12} className="text-[#58a6ff]" />
+            <span className="text-xs font-mono font-semibold text-[#c9d1d9]">Fund Wallet</span>
           </div>
-          {/* Panel body — top border already provided by tab bar */}
           <div className="[&>div]:rounded-none [&>div]:border-0 [&>div]:shadow-none">
-            {activeTab === 'receive'  && <ReceivePanel />}
-            {activeTab === 'transfer' && <TransferPanel />}
+            <ReceivePanel />
           </div>
         </div>
       </div>

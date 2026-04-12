@@ -1,23 +1,15 @@
 import { useStore } from '../../state/store';
 import type { DemoMode } from '../../state/types';
-import { FlaskConical, TestTube, Coins, QrCode } from 'lucide-react';
+import { TestTube, Coins, QrCode } from 'lucide-react';
 
 const demoModes: {
   mode: DemoMode;
   label: string;
   description: string;
-  icon: typeof FlaskConical;
+  icon: typeof TestTube;
   color: string;
   badge?: string;
 }[] = [
-  {
-    mode: 'mock',
-    label: 'Mock Data',
-    description: 'Live scoring with simulated perturbations. No real transactions. Best for demos and pitch presentations.',
-    icon: FlaskConical,
-    color: '#a855f7',
-    badge: 'RECOMMENDED FOR DEMO',
-  },
   {
     mode: 'testnet',
     label: 'Mutinynet Testnet',
@@ -53,11 +45,10 @@ export default function DemoModeSelector() {
         )}
       </div>
       <p className="text-[10px] font-mono text-[#8b949e] mb-4">
-        Choose your demo environment. Mock data shows the algorithm without real transactions.
-        Testnet uses Mutinynet for live Lightning demos with QR codes.
+        Choose your demo environment. Testnet uses Mutinynet for live Lightning demos with QR codes.
       </p>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         {demoModes.map(({ mode, label, description, icon: Icon, color, badge }) => {
           const isActive = state.demoMode === mode;
           return (

@@ -86,10 +86,9 @@ export default function Home() {
             {/* Demo mode indicator */}
             <div className="hidden md:flex items-center gap-1.5 text-[10px] font-mono text-[#8b949e] bg-[#21262d] rounded px-2 py-1 border border-[#30363d]">
               <span className={
-                state.demoMode === 'mock' ? 'text-[#a855f7]' :
                 state.demoMode === 'testnet' ? 'text-[#d29922]' : 'text-[#3fb950]'
               }>
-                {state.demoMode === 'mock' ? 'MOCK' : state.demoMode === 'testnet' ? 'TESTNET' : 'MAINNET'}
+                {state.demoMode === 'testnet' ? 'TESTNET' : 'MAINNET'}
               </span>
             </div>
 

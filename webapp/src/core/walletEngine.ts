@@ -1,7 +1,7 @@
 import { Mint, Wallet, MintQuoteState } from '@cashu/cashu-ts';
 import type { Proof } from '@cashu/cashu-ts';
 import { MINTS } from './config';
-import type { MintConfig, DemoMode, WalletBalance, MigrationEvent } from '../state/types';
+import type { MintConfig, DemoMode, WalletBalance, MigrationEvent, MintScore } from '../state/types';
 
 // ── Result helpers ──────────────────────────────────────────────────
 interface Success<T> { ok: true; data: T }
@@ -52,11 +52,9 @@ class WalletEngine {
   private proofs  = new Map<string, Proof[]>();
 
   private initialized = false;
-  private currentMode: DemoMode = 'mock';
+  private currentMode: DemoMode = 'testnet';
   // In-memory only — never serialized to localStorage
   private bip39seed: Uint8Array | undefined = undefined;
-  // Tracks amount per mock quote so pollMintQuote can credit the right value
-  private mockQuoteAmounts = new Map<string, number>();
 
   // ── Mode management ────────────────────────────────────────────
   getMode(): DemoMode {
@@ -70,8 +68,7 @@ class WalletEngine {
   /**
    * Switch the engine to a new demo mode with the appropriate mint configs.
    * - Saves current proofs, tears down connections, loads new mode's proofs.
-   * - Mock mode: skips real mint init, seeds demo balances on first use.
-   * - Testnet/mainnet: initializes only the filtered mints.
+   * - Initializes only the filtered mints for the given mode.
    * @param bip39seed Optional BIP-39 64-byte seed for deterministic ecash secrets.
    */
   async setMode(mode: DemoMode, mintConfigs: MintConfig[], bip39seed?: Uint8Array): Promise<Result<void>> {
@@ -93,31 +90,6 @@ class WalletEngine {
     // Load proofs for the new mode
     this.proofs = loadProofsFromStorage(mode);
 
-    if (mode === 'mock') {
-      // Populate entries for each mint config (no real connections)
-      for (const cfg of mintConfigs) {
-        if (!this.proofs.has(cfg.url)) {
-          this.proofs.set(cfg.url, []);
-        }
-      }
-      // Seed demo balances on first use so mock mode is useful for demos
-      const totalExisting = Array.from(this.proofs.values())
-        .reduce((sum, p) => sum + p.reduce((s, proof) => s + proof.amount, 0), 0);
-      if (totalExisting === 0) {
-        const seedAmounts = [500, 300, 200, 100, 50];
-        const urls = mintConfigs.map((c) => c.url);
-        urls.forEach((url, i) => {
-          if (i < seedAmounts.length) {
-            this.proofs.set(url, [this.createMockProof(seedAmounts[i])]);
-          }
-        });
-        saveProofsToStorage(this.proofs, 'mock');
-      }
-      this.initialized = true;
-      return success(undefined);
-    }
-
-    // Testnet / mainnet: initialize real mint connections
     return this._initializeMints(mintConfigs);
   }
 
@@ -196,14 +168,6 @@ class WalletEngine {
     mintUrl: string,
     amount: number,
   ): Promise<Result<{ quote: string; request: string }>> {
-    if (this.currentMode === 'mock') {
-      const quote = `mock-quote-${crypto.randomUUID()}`;
-      this.mockQuoteAmounts.set(quote, amount);
-      return success({
-        quote,
-        request: `lnbc${amount}u1mock${crypto.randomUUID().slice(0, 20)}`,
-      });
-    }
     try {
       const wallet = this.getWallet(mintUrl);
       const quoteRes = await wallet.createMintQuoteBolt11(amount);
@@ -213,20 +177,38 @@ class WalletEngine {
     }
   }
 
+  /**
+   * Trust-score-aware receive: auto-selects the best mint to receive into
+   * based on composite trust scores. Picks the highest-scoring online mint.
+   */
+  async smartReceive(
+    amount: number,
+    scores: MintScore[],
+  ): Promise<Result<{ quote: string; request: string; mintUrl: string }>> {
+    const eligible = scores
+      .filter((s) => s.isOnline && s.grade !== 'critical' && this.wallets.has(s.url))
+      .sort((a, b) => b.compositeScore - a.compositeScore);
+
+    if (eligible.length === 0) {
+      return failure('smartReceive: no eligible online mints');
+    }
+
+    // Try mints in trust-score order until one succeeds
+    for (const mint of eligible) {
+      const result = await this.receive(mint.url, amount);
+      if (result.ok) {
+        return success({ ...result.data, mintUrl: mint.url });
+      }
+    }
+
+    return failure('smartReceive: all mints failed to generate invoice');
+  }
+
   async pollMintQuote(
     mintUrl: string,
     quoteId: string,
     maxAttempts = 100,
   ): Promise<Result<Proof[]>> {
-    if (this.currentMode === 'mock') {
-      // Simulate network latency, then credit the originally requested amount
-      await sleep(1500);
-      const amount = this.mockQuoteAmounts.get(quoteId) ?? 100;
-      this.mockQuoteAmounts.delete(quoteId);
-      const newProofs = [this.createMockProof(amount)];
-      this.addProofs(mintUrl, newProofs);
-      return success(newProofs);
-    }
     try {
       const wallet = this.getWallet(mintUrl);
 
@@ -253,9 +235,6 @@ class WalletEngine {
     mintUrl: string,
     invoice: string,
   ): Promise<Result<{ paid: boolean; preimage: string | null }>> {
-    if (this.currentMode === 'mock') {
-      return this.mockSend(mintUrl);
-    }
     try {
       const wallet = this.getWallet(mintUrl);
       const proofs = this.proofs.get(mintUrl) ?? [];
@@ -278,6 +257,117 @@ class WalletEngine {
     }
   }
 
+  /**
+   * Trust-score-aware send: pays a Lightning invoice by preferring to
+   * drain the least-trusted (highest rug-pull risk) mints first.
+   *
+   * Strategy:
+   *   1. If a single mint can cover the invoice, pick the lowest-trust one
+   *      that can — get our money out of the riskiest place first.
+   *   2. If no single mint has enough, consolidate into the highest-trust
+   *      mint by migrating from the least-trusted donors first, then melt
+   *      from the safe mint.
+   *
+   * Either way the net effect is: risky mints get drained, safe mints
+   * retain their balance.
+   */
+  async smartSend(
+    invoice: string,
+    scores: MintScore[],
+  ): Promise<Result<{ paid: boolean; preimage: string | null; usedMints: string[] }>> {
+    // Rank mints by trust score (descending), only online + initialized
+    const ranked = scores
+      .filter((s) => s.isOnline && this.wallets.has(s.url))
+      .sort((a, b) => b.compositeScore - a.compositeScore);
+
+    if (ranked.length === 0) {
+      return failure('smartSend: no eligible online mints');
+    }
+
+    // Build balance view sorted by trust score descending (safest first)
+    const fundedMints: { url: string; balance: number; score: number }[] = [];
+    for (const s of ranked) {
+      const bal = this.getBalance(s.url);
+      if (bal > 0) {
+        fundedMints.push({ url: s.url, balance: bal, score: s.compositeScore });
+      }
+    }
+
+    if (fundedMints.length === 0) {
+      return failure('smartSend: no mints have funds');
+    }
+
+    // Get a cost estimate from any available mint
+    let estimatedCost = 0;
+    for (const m of fundedMints) {
+      try {
+        const wallet = this.getWallet(m.url);
+        const quote = await wallet.createMeltQuoteBolt11(invoice);
+        estimatedCost = quote.amount + quote.fee_reserve;
+        break;
+      } catch {
+        continue;
+      }
+    }
+
+    if (estimatedCost === 0) {
+      return failure('smartSend: could not get melt quote from any mint');
+    }
+
+    const totalAvailable = fundedMints.reduce((s, m) => s + m.balance, 0);
+    if (totalAvailable < estimatedCost) {
+      return failure(
+        `smartSend: insufficient total balance (${totalAvailable} < ${estimatedCost} needed)`,
+      );
+    }
+
+    // Step 1: Try paying directly from the LEAST-trusted mint that can cover
+    // the full amount — drain risky mints first to keep money safe.
+    const riskiestFirst = [...fundedMints].reverse();
+    for (const m of riskiestFirst) {
+      if (m.balance >= estimatedCost) {
+        const result = await this.send(m.url, invoice);
+        if (result.ok) {
+          return success({ ...result.data, usedMints: [m.url] });
+        }
+      }
+    }
+
+    // Step 2: No single mint has enough — consolidate into the safest mint
+    // by draining the riskiest donors first.
+    const safestMint = fundedMints[0]; // highest trust score
+    const needed = estimatedCost - safestMint.balance;
+    let consolidated = 0;
+    const usedMints = [safestMint.url];
+
+    // Donors: every other funded mint, riskiest first
+    const donors = fundedMints.slice(1).reverse();
+    for (const donor of donors) {
+      if (consolidated >= needed) break;
+
+      const contribution = Math.min(donor.balance, needed - consolidated);
+      const migrateResult = await this.migrate(
+        donor.url,
+        safestMint.url,
+        contribution,
+        'smartSend-consolidation',
+      );
+
+      if (migrateResult.ok) {
+        consolidated += contribution;
+        usedMints.push(donor.url);
+      }
+    }
+
+    // Pay from the safe mint
+    const result = await this.send(safestMint.url, invoice);
+    if (result.ok) {
+      return success({ ...result.data, usedMints });
+    }
+
+    return failure(`smartSend: payment failed after consolidation: ${result.error}`);
+  }
+
   // ── Migrate (move ecash between mints) ──────────────────────────
   async migrate(
     fromMintUrl: string,
@@ -285,10 +375,6 @@ class WalletEngine {
     amount: number,
     reason = 'trust-score-migration',
   ): Promise<Result<MigrationEvent>> {
-    if (this.currentMode === 'mock') {
-      return this.mockMigrate(fromMintUrl, toMintUrl, amount, reason);
-    }
-
     const event: MigrationEvent = {
       id: crypto.randomUUID(),
       fromMint: fromMintUrl,
@@ -327,72 +413,6 @@ class WalletEngine {
       event.status = 'failed';
       return failure(`migrate: ${String(err)}`);
     }
-  }
-
-  // ── Mock operation helpers ─────────────────────────────────────
-  private createMockProof(amount: number): Proof {
-    return {
-      id: 'mock-keyset',
-      amount,
-      secret: `mock-secret-${crypto.randomUUID()}`,
-      C: `mock-C-${crypto.randomUUID()}`,
-    } as Proof;
-  }
-
-  private mockSend(mintUrl: string): Result<{ paid: boolean; preimage: string | null }> {
-    const proofs = this.proofs.get(mintUrl) ?? [];
-    if (proofs.length === 0) {
-      return failure('mock send: no proofs available');
-    }
-    // Remove one proof to simulate spending
-    const [, ...remaining] = proofs;
-    this.proofs.set(mintUrl, remaining);
-    saveProofsToStorage(this.proofs, this.currentMode);
-    return success({ paid: true, preimage: `mock-preimage-${crypto.randomUUID()}` });
-  }
-
-  private mockMigrate(
-    fromMintUrl: string,
-    toMintUrl: string,
-    amount: number,
-    reason: string,
-  ): Result<MigrationEvent> {
-    const fromProofs = this.proofs.get(fromMintUrl) ?? [];
-    const fromBalance = fromProofs.reduce((s, p) => s + p.amount, 0);
-    if (fromBalance < amount) {
-      return failure(`mock migrate: insufficient balance (${fromBalance} < ${amount})`);
-    }
-
-    // Deduct from source: remove proofs until we've covered the amount
-    let remaining = amount;
-    const keptProofs: Proof[] = [];
-    for (const p of fromProofs) {
-      if (remaining > 0) {
-        remaining -= p.amount;
-        // If we over-deducted, create change proof
-        if (remaining < 0) {
-          keptProofs.push(this.createMockProof(-remaining));
-        }
-      } else {
-        keptProofs.push(p);
-      }
-    }
-    this.proofs.set(fromMintUrl, keptProofs);
-
-    // Credit to target
-    const toProofs = this.proofs.get(toMintUrl) ?? [];
-    this.proofs.set(toMintUrl, [...toProofs, this.createMockProof(amount)]);
-    saveProofsToStorage(this.proofs, this.currentMode);
-
-    return success({
-      id: crypto.randomUUID(),
-      fromMint: fromMintUrl,
-      toMint: toMintUrl,
-      amount,
-      reason,
-      timestamp: new Date().toISOString(),
-      status: 'completed',
-    });
   }
 
   // ── Internal helpers ────────────────────────────────────────────
