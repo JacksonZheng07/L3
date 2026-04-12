@@ -12,7 +12,6 @@ import type { MintScore, MigrationEvent, WalletBalance } from '../state/types';
 import {
   MIGRATION_THRESHOLD,
   MIGRATION_HYSTERESIS,
-  REBALANCE_DRIFT_PCT,
 } from './config';
 import { walletApi } from './walletApi';
 
@@ -29,9 +28,11 @@ export interface MigrationPlan {
  * Compute migration plans given current scores, balances, and total portfolio value.
  * Does NOT execute them — returns a list of planned moves.
  *
- * Two phases:
- *   1. Evacuate: move funds OUT of critical mints (score < threshold)
- *   2. Rebalance: nudge toward target allocation if drift exceeds threshold
+ * Conservative approach: only move funds when there's a real safety reason.
+ *   - Evacuate critical mints (score < 50) — these are genuinely unsafe
+ *   - Reduce exposure to warning mints (score 50–74) that hold too much
+ *   - NEVER move between safe mints — if it's safe, leave it alone.
+ *     Every migration costs Lightning fees, so don't churn for marginal gains.
  */
 export function computeMigrationPlans(
   scores: MintScore[],
@@ -43,22 +44,20 @@ export function computeMigrationPlans(
   const plans: MigrationPlan[] = [];
   const balanceMap = new Map(balances.map((b) => [b.mintUrl, b.balance]));
 
-  // Eligible targets: score >= threshold + hysteresis and online
-  const eligibleTargets = scores.filter(
-    (s) =>
-      s.compositeScore >= MIGRATION_THRESHOLD + MIGRATION_HYSTERESIS &&
-      s.isOnline &&
-      s.grade !== 'critical',
-  );
+  // Eligible targets: must be safe (score >= threshold + hysteresis) and online
+  const safeTargets = scores
+    .filter(
+      (s) =>
+        s.compositeScore >= MIGRATION_THRESHOLD + MIGRATION_HYSTERESIS &&
+        s.isOnline &&
+        s.grade === 'safe',
+    )
+    .sort((a, b) => b.compositeScore - a.compositeScore);
 
-  if (eligibleTargets.length === 0) return []; // nowhere safe to move
+  if (safeTargets.length === 0) return []; // nowhere safe to move
 
-  // Sort targets by score descending (prefer highest-trust mints)
-  const sortedTargets = [...eligibleTargets].sort(
-    (a, b) => b.compositeScore - a.compositeScore,
-  );
-
-  // ── Phase 1: Evacuate critical mints ──────────────────────────────
+  // ── Phase 1: Evacuate critical mints (score < 50) ─────────────────
+  // These are genuinely dangerous — get everything out
   const criticalMints = scores.filter(
     (s) => s.compositeScore < MIGRATION_THRESHOLD,
   );
@@ -67,8 +66,7 @@ export function computeMigrationPlans(
     const currentBalance = balanceMap.get(mint.url) ?? 0;
     if (currentBalance <= 0) continue;
 
-    // Find the best target that isn't this mint
-    const target = sortedTargets.find((t) => t.url !== mint.url);
+    const target = safeTargets.find((t) => t.url !== mint.url);
     if (!target) continue;
 
     plans.push({
@@ -77,47 +75,45 @@ export function computeMigrationPlans(
       toMint: target.url,
       toName: target.name,
       amount: currentBalance,
-      reason: `Trust score ${mint.compositeScore.toFixed(0)} < ${MIGRATION_THRESHOLD} (critical). Evacuating all funds.`,
+      reason: `CRITICAL: trust score ${mint.compositeScore.toFixed(0)} < ${MIGRATION_THRESHOLD}. Evacuating all funds.`,
     });
   }
 
-  // ── Phase 2: Rebalance toward target allocation ───────────────────
-  // Only rebalance non-critical mints if drift is large enough
-  const nonCritical = scores.filter(
-    (s) => s.compositeScore >= MIGRATION_THRESHOLD,
+  // ── Phase 2: Reduce overexposure to warning mints ─────────────────
+  // Warning mints (score 50–74) aren't immediately dangerous, but we
+  // shouldn't hold more than 25% of the portfolio there. Only move the
+  // excess — don't drain them entirely.
+  const WARNING_MAX_PCT = 25;
+  const warningMints = scores.filter(
+    (s) =>
+      s.grade === 'warning' &&
+      s.compositeScore >= MIGRATION_THRESHOLD,
   );
 
-  for (const mint of nonCritical) {
+  for (const mint of warningMints) {
     const currentBalance = balanceMap.get(mint.url) ?? 0;
-    const currentPct = totalBalance > 0 ? (currentBalance / totalBalance) * 100 : 0;
-    const targetPct = mint.allocationPct;
-    const drift = currentPct - targetPct;
+    const currentPct = (currentBalance / totalBalance) * 100;
 
-    // Only rebalance if overweight by more than the drift threshold
-    if (drift > REBALANCE_DRIFT_PCT && currentBalance > 0) {
-      const excessAmount = Math.floor((drift / 100) * totalBalance);
+    if (currentPct > WARNING_MAX_PCT && currentBalance > 0) {
+      const excessPct = currentPct - WARNING_MAX_PCT;
+      const excessAmount = Math.floor((excessPct / 100) * totalBalance);
       if (excessAmount <= 0) continue;
 
-      // Find the most underweight eligible target
-      const underweightTarget = sortedTargets.find((t) => {
-        if (t.url === mint.url) return false;
-        const tBal = balanceMap.get(t.url) ?? 0;
-        const tCurrentPct = totalBalance > 0 ? (tBal / totalBalance) * 100 : 0;
-        return t.allocationPct - tCurrentPct > REBALANCE_DRIFT_PCT / 2;
-      });
-
-      if (!underweightTarget) continue;
+      const target = safeTargets.find((t) => t.url !== mint.url);
+      if (!target) continue;
 
       plans.push({
         fromMint: mint.url,
         fromName: mint.name,
-        toMint: underweightTarget.url,
-        toName: underweightTarget.name,
+        toMint: target.url,
+        toName: target.name,
         amount: excessAmount,
-        reason: `Rebalancing: ${mint.name} at ${currentPct.toFixed(1)}% vs target ${targetPct.toFixed(1)}% (drift ${drift.toFixed(1)}%)`,
+        reason: `WARNING: ${mint.name} score ${mint.compositeScore.toFixed(0)}, holding ${currentPct.toFixed(0)}% (max ${WARNING_MAX_PCT}% for warning mints). Moving excess.`,
       });
     }
   }
+
+  // No Phase 3: safe mints are left alone. No rebalancing between safe mints.
 
   return plans;
 }

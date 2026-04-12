@@ -385,30 +385,62 @@ class WalletEngine {
       status: 'pending',
     };
 
+    const sourceBalance = this.getBalance(fromMintUrl);
+    if (sourceBalance < amount) {
+      console.warn(`[WalletEngine] migrate: insufficient balance (have ${sourceBalance}, need ${amount}) — cannot migrate`);
+      event.status = 'failed';
+      return failure(`Insufficient balance at ${mintName(fromMintUrl)}: have ${sourceBalance} sats, need ${amount}`);
+    }
+
     try {
       const sourceWallet = this.getWallet(fromMintUrl);
       const targetWallet = this.getWallet(toMintUrl);
 
       event.status = 'in_progress';
 
+      // Step 1: Get a Lightning invoice from the destination mint
       const mintQuote = await targetWallet.createMintQuoteBolt11(amount);
 
+      // Step 2: Get a melt quote from source to pay that invoice
       const sourceProofs = this.proofs.get(fromMintUrl) ?? [];
       const meltQuote = await sourceWallet.createMeltQuoteBolt11(mintQuote.request);
       const needed = meltQuote.amount + meltQuote.fee_reserve;
-      const { keep, send: toSend } = sourceWallet.selectProofsToSend(sourceProofs, needed, true);
+      const routingFee = meltQuote.fee_reserve;
 
+      console.log(`[WalletEngine] migrate: amount=${amount}, fee_reserve=${routingFee}, total_needed=${needed}, source_balance=${sourceBalance}`);
+
+      if (sourceBalance < needed) {
+        // Not enough to cover amount + worst-case fee — reduce the migration amount
+        // to fit within what we have, accounting for fees
+        console.warn(`[WalletEngine] migrate: balance (${sourceBalance}) < needed (${needed}). Adjusting amount to fit fees.`);
+        const adjustedAmount = amount - routingFee;
+        if (adjustedAmount <= 0) {
+          event.status = 'failed';
+          return failure(`Lightning fee (${routingFee} sats) exceeds migration amount (${amount} sats)`);
+        }
+        // Retry with reduced amount
+        return this.migrate(fromMintUrl, toMintUrl, adjustedAmount, reason);
+      }
+
+      // Step 3: Select proofs and melt (pay the Lightning invoice)
+      const { keep, send: toSend } = sourceWallet.selectProofsToSend(sourceProofs, needed, true);
       const meltResult = await sourceWallet.meltProofsBolt11(meltQuote, toSend);
 
+      // Step 4: Save change proofs back to source (unused fee_reserve comes back as change)
       const updatedSourceProofs = [...keep, ...meltResult.change];
+      const changeAmount = meltResult.change.reduce((s, p) => s + p.amount, 0);
+      const actualFee = needed - amount - changeAmount;
       this.proofs.set(fromMintUrl, updatedSourceProofs);
       saveProofsToFile(this.proofs, this.currentMode);
 
+      // Step 5: Mint new proofs at destination
       const newProofs = await targetWallet.mintProofsBolt11(amount, mintQuote.quote);
       this.addProofs(toMintUrl, newProofs);
 
+      const received = newProofs.reduce((s, p) => s + p.amount, 0);
+      event.amount = received;
       event.status = 'completed';
-      console.log(`[WalletEngine] migrate: DONE ✓ — ${amount} sats moved ${mintName(fromMintUrl)} → ${mintName(toMintUrl)}`);
+      console.log(`[WalletEngine] migrate: DONE ✓ — ${received} sats received at ${mintName(toMintUrl)} (fee: ${actualFee} sats)`);
       return success(event);
     } catch (err) {
       event.status = 'failed';

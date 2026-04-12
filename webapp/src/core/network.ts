@@ -57,11 +57,11 @@ async function fetchWithRetry(
 }
 
 // ── CORS proxy helper ────────────────────────────────────────────────
-// Route mint requests through Vite's CORS proxy to avoid browser blocks.
-// https://example.com/v1/info → /cashu-proxy/example.com/v1/info
+// Route mint requests through the server-side CORS proxy.
+// https://example.com/v1/info → /api/cashu-proxy?target=example.com/v1/info
 function proxyMintUrl(mintUrl: string, path: string): string {
   const host = mintUrl.replace(/^https?:\/\//, '').replace(/\/+$/, '');
-  return `/cashu-proxy/${host}${path}`;
+  return `/api/cashu-proxy?target=${encodeURIComponent(host + path)}`;
 }
 
 // ── Cashu Mint Probing ───────────────────────────────────────────────
@@ -122,10 +122,26 @@ if (useProxy && import.meta.env.DEV) {
   console.error('[Allium] No API key found — set VITE_ALLIUM_API_KEY in webapp/.env. Proxy mode will fail in dev.');
 }
 
+// ── Allium response cache (5 min TTL) ───────────────────────────────
+// On-chain data changes slowly — no need to re-fetch every scoring cycle.
+const ALLIUM_CACHE_TTL = 5 * 60_000;
+const alliumCache = new Map<string, { data: Record<string, unknown>; expiry: number }>();
+
+function alliumCacheKey(endpoint: string, body: unknown): string {
+  return `${endpoint}::${JSON.stringify(body)}`;
+}
+
 async function alliumPost(
   endpoint: string,
   body: unknown,
 ): Promise<Record<string, unknown> | null> {
+  // Check cache first
+  const cacheKey = alliumCacheKey(endpoint, body);
+  const cached = alliumCache.get(cacheKey);
+  if (cached && Date.now() < cached.expiry) {
+    return cached.data;
+  }
+
   let url: string;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
@@ -143,15 +159,17 @@ async function alliumPost(
         url,
         { method: 'POST', headers, body: JSON.stringify(body) },
         1,
-        15_000,
+        30_000,
       );
 
       if (response.ok) {
-        return (await response.json()) as Record<string, unknown>;
+        const data = (await response.json()) as Record<string, unknown>;
+        alliumCache.set(cacheKey, { data, expiry: Date.now() + ALLIUM_CACHE_TTL });
+        return data;
       }
 
       if (response.status === 429) {
-        const wait = 2000 * (attempt + 1);
+        const wait = 3000 * (attempt + 1);
         console.warn(`[Allium] 429 on ${endpoint}, backing off ${wait}ms…`);
         await new Promise((r) => setTimeout(r, wait));
         continue;

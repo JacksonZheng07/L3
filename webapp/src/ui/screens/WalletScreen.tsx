@@ -1,8 +1,9 @@
 import { useStore } from '../../state/store';
 import WalletConnectPanel from '../components/WalletConnectPanel';
 import ReceivePanel from '../components/ReceivePanel';
+import SendPanel from '../components/SendPanel';
 import MigrationLog from '../components/MigrationLog';
-import { Wallet, Download, History, RefreshCw } from 'lucide-react';
+import { Wallet, Download, Send, History, RefreshCw } from 'lucide-react';
 import { gradeColor } from '../../lib/theme';
 
 export default function WalletScreen() {
@@ -81,8 +82,8 @@ export default function WalletScreen() {
         )}
       </div>
 
-      {/* ── Left: connect; Right: receive ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+      {/* ── Connect / Receive / Send ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
         {/* Wallet connect */}
         <WalletConnectPanel />
 
@@ -92,11 +93,25 @@ export default function WalletScreen() {
           style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.3)' }}
         >
           <div className="flex items-center gap-2 bg-[#161b22] px-5 py-3 border-b border-[#21262d]">
-            <Download size={12} className="text-[#58a6ff]" />
-            <span className="text-xs font-mono font-semibold text-[#c9d1d9]">Fund Wallet</span>
+            <Download size={12} className="text-[#3fb950]" />
+            <span className="text-xs font-mono font-semibold text-[#c9d1d9]">Receive</span>
           </div>
           <div className="[&>div]:rounded-none [&>div]:border-0 [&>div]:shadow-none">
             <ReceivePanel />
+          </div>
+        </div>
+
+        {/* Send panel */}
+        <div
+          className="rounded-xl border border-[#21262d] overflow-hidden"
+          style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.3)' }}
+        >
+          <div className="flex items-center gap-2 bg-[#161b22] px-5 py-3 border-b border-[#21262d]">
+            <Send size={12} className="text-[#58a6ff]" />
+            <span className="text-xs font-mono font-semibold text-[#c9d1d9]">Send</span>
+          </div>
+          <div className="[&>div]:rounded-none [&>div]:border-0 [&>div]:shadow-none">
+            <SendPanel />
           </div>
         </div>
       </div>
