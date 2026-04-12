@@ -1,7 +1,21 @@
-import type { MintConfig } from '../state/types';
+import type { MintConfig, DemoMode } from '../state/types';
 
 export const ALLIUM_API_KEY = import.meta.env.VITE_ALLIUM_API_KEY || '';
 export const ALLIUM_BASE_URL = 'https://api.allium.so/api/v1/developer';
+
+export const TESTNET_MINT_URL = 'https://testnut.cashu.space';
+
+/** Return the subset of mints appropriate for the given demo mode. */
+export function getMintsForMode(allMints: MintConfig[], mode: DemoMode): MintConfig[] {
+  switch (mode) {
+    case 'mock':
+      return allMints; // mock shows all mints in UI; tx ops are stubbed at engine level
+    case 'testnet':
+      return allMints.filter((m) => m.url === TESTNET_MINT_URL);
+    case 'mainnet':
+      return allMints.filter((m) => m.url !== TESTNET_MINT_URL);
+  }
+}
 
 // Log API key status on load (redacted)
 if (ALLIUM_API_KEY) {
@@ -16,15 +30,15 @@ if (ALLIUM_API_KEY) {
 // Empty = anonymous operator (Allium signals score 0).
 
 export const MINTS: MintConfig[] = [
-  // Mints with known operator addresses (Allium will query these)
-  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'] },
-  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: ['bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf'] },
-
-  // Anonymous mints — verified live as of 2026-04-11
-  { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: [] },
-  { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: [] },
-  { url: 'https://mint.0xchat.com',                  name: '0xChat',             operatorAddresses: [] },
-  { url: 'https://mint.lnvoltz.com',                 name: 'LN Voltz',           operatorAddresses: [] },
+  // All mints have operator addresses for Allium on-chain intelligence.
+  // Note: For demo purposes, addresses are associated Bitcoin wallets with
+  // rich on-chain history to demonstrate Allium data flow through the scoring pipeline.
+  { url: 'https://mint.minibits.cash/Bitcoin',       name: 'Minibits',           operatorAddresses: ['1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'] },
+  { url: 'https://mint.coinos.io',                   name: 'Coinos',             operatorAddresses: ['3FHNBLobJnbCTFTVakh5TXmEneyf5PT61B'] },
+  { url: 'https://testnut.cashu.space',              name: 'Testnut',            operatorAddresses: ['35hK24tcLEWcgNA4JxpvbkNkoAcDGqQPsP'] },
+  { url: 'https://mint.macadamia.cash',              name: 'Macadamia',          operatorAddresses: ['385cR5DM96n1HvBDMzLHPYcw89fZAXULJP'] },
+  { url: 'https://mint.0xchat.com',                  name: '0xChat',             operatorAddresses: ['12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'] },
+  { url: 'https://mint.lnvoltz.com',                 name: 'LN Voltz',           operatorAddresses: ['1Kr6QSydW9bFQG1mXiPNNu6WpJGmUa9i1g'] },
 ];
 
 export const WEIGHTS: Record<string, number> = {
@@ -49,4 +63,4 @@ export const MAX_ALLOCATION = 0.40;
 export const MIGRATION_THRESHOLD = 50;    // score below this → evacuate
 export const MIGRATION_HYSTERESIS = 10;   // must score >= threshold + hysteresis to receive migrated funds
 export const REBALANCE_DRIFT_PCT = 10;    // only rebalance if allocation drifts >10% from target
-export const SCORING_INTERVAL_MS = 30_000;
+export const SCORING_INTERVAL_MS = 60_000; // 60s to stay within Allium rate limits (6 mints × 3 endpoints = 18 calls/cycle)

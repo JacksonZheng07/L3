@@ -110,6 +110,10 @@ export async function probeMintKeysets(
 const ALLIUM_DIRECT_BASE = 'https://api.allium.so/api/v1/developer';
 const useProxy = !ALLIUM_API_KEY; // use proxy when no client-side key
 
+if (useProxy && import.meta.env.DEV) {
+  console.error('[Allium] No API key found — set VITE_ALLIUM_API_KEY in webapp/.env. Proxy mode will fail in dev.');
+}
+
 async function alliumPost(
   endpoint: string,
   body: unknown,
@@ -175,11 +179,18 @@ export async function fetchWalletBalances(
 
 /**
  * Fetch historical balances for an address.
- * Allium expects: POST /wallet/balances/history with body: [{chain, address}]
+ * Allium expects: POST /wallet/balances/history with body:
+ *   { addresses: [{chain, address}], start_timestamp, end_timestamp }
  */
 export async function fetchHistoricalBalances(
   address: string,
   chain = 'bitcoin',
 ): Promise<Record<string, unknown> | null> {
-  return alliumPost('/wallet/balances/history', [{ address, chain }]);
+  const end = new Date().toISOString();
+  const start = new Date(Date.now() - 365 * 86_400_000).toISOString(); // 1 year ago
+  return alliumPost('/wallet/balances/history', {
+    addresses: [{ address, chain }],
+    start_timestamp: start,
+    end_timestamp: end,
+  });
 }

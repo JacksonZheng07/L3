@@ -1,4 +1,5 @@
 import { useStore } from '../../state/store';
+import { gradeColor } from '../../lib/theme';
 import {
   PieChart,
   Pie,
@@ -6,9 +7,6 @@ import {
   ResponsiveContainer,
   Tooltip,
 } from 'recharts';
-
-const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
-  grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
 
 export default function AllocationPie() {
   const { effectiveScores: scores } = useStore();

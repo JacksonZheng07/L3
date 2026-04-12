@@ -1,8 +1,6 @@
 import { useStore } from '../../state/store';
+import { gradeColor } from '../../lib/theme';
 import { Zap } from 'lucide-react';
-
-const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
-  grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
 
 export default function TrustSpectrum() {
   const { state, effectiveScores: scores } = useStore();

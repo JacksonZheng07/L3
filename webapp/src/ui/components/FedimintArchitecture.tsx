@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../../state/store';
+import { selectEntityWallets, selectFederationGroups } from '../../state/selectors';
 import { Shield, Users, Cpu, Link, Wallet, ChevronDown, ChevronUp, Lock } from 'lucide-react';
 
 const roleColor: Record<string, string> = {
@@ -20,82 +21,8 @@ export default function FedimintArchitecture() {
   const { state, effectiveScores } = useStore();
   const [expandedFed, setExpandedFed] = useState<string | null>(null);
 
-  // Derive entity wallets from real state
-  const entityWallets = [
-    // User wallet — real balance from walletEngine
-    {
-      id: 'user-wallet',
-      name: 'L3 User Wallet',
-      role: 'user' as const,
-      balanceSats: state.totalBalance,
-      address: 'Browser (ecash proofs in localStorage)',
-    },
-    // Derive mint operator wallets from real scores + balances
-    ...effectiveScores.map((score) => {
-      const walletBalance = state.balances.find((b) => b.mintUrl === score.url);
-      return {
-        id: `mint-${score.url}`,
-        name: score.name,
-        role: 'mint_operator' as const,
-        balanceSats: walletBalance?.balance ?? 0,
-        address: score.url,
-        extra: {
-          online: score.isOnline,
-          trustScore: score.compositeScore,
-          grade: score.grade,
-          latencyMs: score.latencyMs,
-        },
-      };
-    }),
-  ];
-
-  // Derive federation-like groupings from scored mints
-  // Group safe mints as a "virtual federation" to show the concept
-  const safeMints = effectiveScores.filter((s) => s.grade === 'safe');
-  const warningMints = effectiveScores.filter((s) => s.grade === 'warning');
-  const criticalMints = effectiveScores.filter((s) => s.grade === 'critical');
-
-  const federationGroups = [
-    ...(safeMints.length > 0
-      ? [
-          {
-            id: 'safe-cluster',
-            name: 'Safe Mint Cluster',
-            description: 'Mints scoring >= 75. In a Fedimint model, these would form a high-trust federation.',
-            mints: safeMints,
-            avgScore: safeMints.reduce((s, m) => s + m.compositeScore, 0) / safeMints.length,
-            status: 'healthy' as const,
-            potentialThreshold: Math.ceil(safeMints.length * 0.6), // 60% threshold
-          },
-        ]
-      : []),
-    ...(warningMints.length > 0
-      ? [
-          {
-            id: 'warning-cluster',
-            name: 'Warning Mint Cluster',
-            description: 'Mints scoring 50-74. Require monitoring. Federation threshold would need to be higher.',
-            mints: warningMints,
-            avgScore: warningMints.reduce((s, m) => s + m.compositeScore, 0) / warningMints.length,
-            status: 'degraded' as const,
-            potentialThreshold: Math.ceil(warningMints.length * 0.75), // 75% threshold
-          },
-        ]
-      : []),
-    ...(criticalMints.length > 0
-      ? [
-          {
-            id: 'critical-cluster',
-            name: 'Critical Mints (Excluded)',
-            description: 'Mints scoring < 50. Zero allocation. Would be excluded from any federation.',
-            mints: criticalMints,
-            avgScore: criticalMints.reduce((s, m) => s + m.compositeScore, 0) / criticalMints.length,
-            status: 'offline' as const,
-            potentialThreshold: 0,
-          },
-        ]
-      : []),
-  ];
+  const entityWallets = selectEntityWallets(effectiveScores, state.balances, state.totalBalance);
+  const federationGroups = selectFederationGroups(effectiveScores);
 
   const statusColor = (status: string) =>
     status === 'healthy' ? '#3fb950' : status === 'degraded' ? '#d29922' : '#f85149';

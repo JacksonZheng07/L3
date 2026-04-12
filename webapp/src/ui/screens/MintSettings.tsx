@@ -1,8 +1,6 @@
 import { useStore } from '../../state/store';
+import { gradeColor } from '../../lib/theme';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
-
-const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
-  grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
 
 export default function MintSettings() {
   const { state, dispatch } = useStore();
@@ -19,7 +17,7 @@ export default function MintSettings() {
             onClick={() => dispatch({ type: 'SET_SELECTED_MINT', url: null })}
             className="flex items-center gap-2 text-xs font-mono px-3 py-1.5 rounded border border-[#30363d] bg-[#21262d] text-[#c9d1d9] hover:bg-[#30363d] transition-colors mx-auto"
           >
-            <ArrowLeft size={12} /> Back to Dashboard
+            <ArrowLeft size={12} /> Close
           </button>
         </div>
       </div>
@@ -35,7 +33,7 @@ export default function MintSettings() {
             onClick={() => dispatch({ type: 'SET_SELECTED_MINT', url: null })}
             className="flex items-center gap-2 text-xs font-mono text-[#58a6ff] hover:underline mb-3"
           >
-            <ArrowLeft size={12} /> Back to Dashboard
+            <ArrowLeft size={12} /> Close
           </button>
 
           <div className="flex items-center justify-between">

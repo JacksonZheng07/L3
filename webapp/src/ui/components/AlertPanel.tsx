@@ -1,5 +1,5 @@
 import { useStore } from '../../state/store';
-import { computeMigrationPlans, executeMigration } from '../../core/migrationEngine';
+import { relativeTime } from '../../lib/formatters';
 import { AlertTriangle, TrendingDown, ArrowRightLeft, CheckCircle, X, Bell } from 'lucide-react';
 
 const typeConfig: Record<string, { icon: typeof AlertTriangle; color: string; bg: string }> = {
@@ -10,17 +10,8 @@ const typeConfig: Record<string, { icon: typeof AlertTriangle; color: string; bg
   recovery: { icon: CheckCircle, color: '#3fb950', bg: 'bg-[#3fb950]/10' },
 };
 
-function relativeTime(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const secs = Math.floor(diff / 1000);
-  if (secs < 60) return 'just now';
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  return `${Math.floor(mins / 60)}h ago`;
-}
-
 export default function AlertPanel() {
-  const { state, dispatch } = useStore();
+  const { state, dispatch, approveMigration } = useStore();
   const activeAlerts = state.alerts.filter(a => !a.dismissed);
   const dismissedAlerts = state.alerts.filter(a => a.dismissed);
 
@@ -90,38 +81,7 @@ export default function AlertPanel() {
                 {alert.actionTaken === 'pending' && alert.type === 'migration_suggested' && (
                   <div className="flex gap-2 mt-2">
                     <button
-                      onClick={async () => {
-                        dispatch({ type: 'SET_ALERT_ACTION', id: alert.id, action: 'migrated' });
-
-                        // Compute real migration plans from current scores/balances
-                        const plans = computeMigrationPlans(
-                          state.scores,
-                          state.balances,
-                          state.totalBalance,
-                        );
-                        // Find a plan matching this alert's mint, or create one
-                        const plan = plans.find((p) => p.fromName === alert.mintName) ?? plans[0];
-                        if (plan) {
-                          const event = await executeMigration(plan);
-                          if (event) {
-                            dispatch({ type: 'ADD_MIGRATION', event });
-                          }
-                        } else {
-                          // Fallback: log the approved migration
-                          dispatch({
-                            type: 'ADD_MIGRATION',
-                            event: {
-                              id: crypto.randomUUID(),
-                              fromMint: alert.mintName,
-                              toMint: 'Best available',
-                              amount: 0,
-                              reason: `Manual approval: trust score ${alert.score.toFixed(0)} — no eligible target found`,
-                              timestamp: new Date().toISOString(),
-                              status: 'failed',
-                            },
-                          });
-                        }
-                      }}
+                      onClick={() => approveMigration(alert.id, alert.mintName, alert.score)}
                       className="text-[9px] font-mono px-2 py-1 rounded bg-[#3fb950]/20 text-[#3fb950] border border-[#3fb950]/30 hover:bg-[#3fb950]/30 transition-colors"
                     >
                       Approve Migration

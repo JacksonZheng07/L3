@@ -1,4 +1,5 @@
 import { useStore } from '../../state/store';
+import { gradeColor } from '../../lib/theme';
 import {
   BarChart,
   Bar,
@@ -9,9 +10,6 @@ import {
   Cell,
   ReferenceLine,
 } from 'recharts';
-
-const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
-  grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
 
 export default function ScoreChart() {
   const { effectiveScores: scores } = useStore();

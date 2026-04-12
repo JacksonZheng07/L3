@@ -1,12 +1,17 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { AppState, AppView, MintConfig, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert, DemoMode, EntityWallet, Federation } from './types';
-import '../core/config';
+import type { AppState, AppView, MintConfig, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert, DemoMode, EntityWallet, Federation, WalletConnection } from './types';
+import { getMintsForMode } from '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
 import { walletEngine } from '../core/walletEngine';
 import { computeMigrationPlans, executeMigration } from '../core/migrationEngine';
 import { discoverMints } from '../core/mintDiscovery';
+import {
+  generateScoreAlerts,
+  generateAutoMigrationAlerts,
+  generateAlertModeSuggestions,
+} from '../core/alertEngine';
 
 const initialState: AppState = {
   discoveredMints: [],
@@ -111,6 +116,17 @@ interface StoreContextType {
   runScoring: () => Promise<void>;
   refreshBalances: () => void;
   setView: (view: AppView) => void;
+  approveMigration: (alertId: string, mintName: string, score: number) => Promise<void>;
+  /**
+   * (Re-)initialise the wallet engine with an optional BIP-39 seed.
+   * Resolves with a WalletConnection describing per-mint status.
+   */
+  connectWallet: (bip39seed?: Uint8Array) => Promise<WalletConnection>;
+  /**
+   * Manually move sats from one mint to another.
+   * Adds the resulting event to the migration log and refreshes balances.
+   */
+  manualTransfer: (fromUrl: string, toUrl: string, amount: number) => Promise<MigrationEvent | null>;
   /** Returns the effective scores (simulation overrides real when active) */
   effectiveScores: MintScore[];
 }
@@ -132,16 +148,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_BALANCES', balances, total });
   }, []);
 
-  const runScoring = useCallback(async () => {
-    if (scoringRef.current) return;
-    const mints = mintsRef.current;
-    if (mints.length === 0) return; // not yet discovered
-    scoringRef.current = true;
-    dispatch({ type: 'SET_SCORING', isScoring: true });
-
-    try {
-      const probeResults = new Map<string, ProbeResult>();
-      const probePromises = mints.map(async (mint) => {
+  /** Step 1: Fire all mint probes in parallel, dispatch each result as it arrives */
+  async function probeAllMints(mints: MintConfig[]): Promise<Map<string, ProbeResult>> {
+    const probeResults = new Map<string, ProbeResult>();
+    await Promise.allSettled(
+      mints.map(async (mint) => {
         const [info, keysets] = await Promise.all([
           probeMintInfo(mint.url),
           probeMintKeysets(mint.url),
@@ -149,140 +160,74 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const result: ProbeResult = { info, keysets };
         probeResults.set(mint.url, result);
         dispatch({ type: 'SET_PROBE_RESULT', url: mint.url, result });
-      });
+      }),
+    );
+    return probeResults;
+  }
 
-      await Promise.allSettled(probePromises);
+  /** Step 2: Update the mutable keyset cache from newly scored results */
+  function updateKeysetCache(scores: MintScore[]): void {
+    for (const score of scores) {
+      const keysetSignal = score.signals.find((s) => s.name === 'keyset_stability');
+      if (keysetSignal?.rawData?.keysets) {
+        cachedKeysets.current.set(score.url, keysetSignal.rawData.keysets as string[]);
+      }
+    }
+  }
 
+  /** Step 3: Execute auto or alert-mode migration logic after scoring */
+  async function executeAutoMigrations(
+    scores: MintScore[],
+    currentState: AppState,
+  ): Promise<void> {
+    if (currentState.automationMode === 'auto' && currentState.totalBalance > 0) {
+      const plans = computeMigrationPlans(scores, currentState.balances, currentState.totalBalance);
+
+      generateAutoMigrationAlerts(plans, scores).forEach((alert) =>
+        dispatch({ type: 'ADD_ALERT', alert }),
+      );
+
+      for (const plan of plans) {
+        const event = await executeMigration(plan, currentState.demoMode);
+        if (event) dispatch({ type: 'ADD_MIGRATION', event });
+      }
+
+      if (plans.length > 0) refreshBalances();
+    } else if (currentState.automationMode === 'alert') {
+      const plans = computeMigrationPlans(scores, currentState.balances, currentState.totalBalance);
+      generateAlertModeSuggestions(plans, scores).forEach((alert) =>
+        dispatch({ type: 'ADD_ALERT', alert }),
+      );
+    }
+  }
+
+  /** Coordinator: probe → score → alert → (auto-)migrate */
+  const runScoring = useCallback(async () => {
+    if (scoringRef.current) return;
+    const allMints = mintsRef.current;
+    if (allMints.length === 0) return;
+
+    // In mock mode, probe all mints (read-only). In testnet/mainnet, only relevant mints.
+    const mints = stateRef.current.demoMode === 'mock'
+      ? allMints
+      : getMintsForMode(allMints, stateRef.current.demoMode);
+
+    scoringRef.current = true;
+    dispatch({ type: 'SET_SCORING', isScoring: true });
+
+    try {
+      const probeResults = await probeAllMints(mints);
       const scores = await scoreAllMints(mints, probeResults, cachedKeysets.current);
 
-      // Update keyset cache
-      for (const score of scores) {
-        const keysetSignal = score.signals.find(s => s.name === 'keyset_stability');
-        if (keysetSignal?.rawData?.keysets) {
-          cachedKeysets.current.set(score.url, keysetSignal.rawData.keysets as string[]);
-        }
-      }
+      updateKeysetCache(scores);
 
-      // Generate alerts by comparing with previous scores
-      for (const score of scores) {
-        const prevScore = prevScoresRef.current.get(score.url);
-        if (prevScore !== undefined) {
-          const drop = prevScore - score.compositeScore;
-          if (score.grade === 'critical' && drop > 0) {
-            dispatch({
-              type: 'ADD_ALERT',
-              alert: {
-                id: crypto.randomUUID(),
-                timestamp: new Date().toISOString(),
-                mintUrl: score.url,
-                mintName: score.name,
-                type: 'critical',
-                message: `${score.name} dropped to CRITICAL (${score.compositeScore.toFixed(0)}/100). Funds at risk.`,
-                score: score.compositeScore,
-                previousScore: prevScore,
-                dismissed: false,
-                actionTaken: 'pending',
-              },
-            });
-          } else if (drop >= 10) {
-            dispatch({
-              type: 'ADD_ALERT',
-              alert: {
-                id: crypto.randomUUID(),
-                timestamp: new Date().toISOString(),
-                mintUrl: score.url,
-                mintName: score.name,
-                type: 'score_drop',
-                message: `${score.name} score dropped ${drop.toFixed(0)} points (${prevScore.toFixed(0)} -> ${score.compositeScore.toFixed(0)})`,
-                score: score.compositeScore,
-                previousScore: prevScore,
-                dismissed: false,
-              },
-            });
-          } else if (prevScore < 50 && score.compositeScore >= 75) {
-            dispatch({
-              type: 'ADD_ALERT',
-              alert: {
-                id: crypto.randomUUID(),
-                timestamp: new Date().toISOString(),
-                mintUrl: score.url,
-                mintName: score.name,
-                type: 'recovery',
-                message: `${score.name} recovered to SAFE (${score.compositeScore.toFixed(0)}/100)`,
-                score: score.compositeScore,
-                previousScore: prevScore,
-                dismissed: false,
-              },
-            });
-          }
-        }
-        prevScoresRef.current.set(score.url, score.compositeScore);
-      }
+      generateScoreAlerts(scores, prevScoresRef.current).forEach((alert) =>
+        dispatch({ type: 'ADD_ALERT', alert }),
+      );
+      scores.forEach((s) => prevScoresRef.current.set(s.url, s.compositeScore));
 
       dispatch({ type: 'SET_SCORES', scores });
-
-      // ── Auto-migration: compute and execute migration plans ──────
-      const currentState = stateRef.current;
-      if (currentState.automationMode === 'auto' && currentState.totalBalance > 0) {
-        const plans = computeMigrationPlans(
-          scores,
-          currentState.balances,
-          currentState.totalBalance,
-        );
-
-        for (const plan of plans) {
-          // Dispatch alert about the migration
-          dispatch({
-            type: 'ADD_ALERT',
-            alert: {
-              id: crypto.randomUUID(),
-              timestamp: new Date().toISOString(),
-              mintUrl: plan.fromMint,
-              mintName: plan.fromName,
-              type: 'migration_executed',
-              message: `Auto-migrating ${plan.amount.toLocaleString()} sats from ${plan.fromName} to ${plan.toName}: ${plan.reason}`,
-              score: scores.find((s) => s.url === plan.fromMint)?.compositeScore ?? 0,
-              dismissed: false,
-              actionTaken: 'migrated',
-            },
-          });
-
-          // Execute the actual migration
-          const event = await executeMigration(plan);
-          if (event) {
-            dispatch({ type: 'ADD_MIGRATION', event });
-          }
-        }
-
-        // Refresh balances after migrations
-        if (plans.length > 0) {
-          refreshBalances();
-        }
-      } else if (currentState.automationMode === 'alert') {
-        // In alert mode, just suggest migrations
-        const plans = computeMigrationPlans(
-          scores,
-          currentState.balances,
-          currentState.totalBalance,
-        );
-
-        for (const plan of plans) {
-          dispatch({
-            type: 'ADD_ALERT',
-            alert: {
-              id: crypto.randomUUID(),
-              timestamp: new Date().toISOString(),
-              mintUrl: plan.fromMint,
-              mintName: plan.fromName,
-              type: 'migration_suggested',
-              message: `Suggested: move ${plan.amount.toLocaleString()} sats from ${plan.fromName} to ${plan.toName}. ${plan.reason}`,
-              score: scores.find((s) => s.url === plan.fromMint)?.compositeScore ?? 0,
-              dismissed: false,
-              actionTaken: 'pending',
-            },
-          });
-        }
-      }
+      await executeAutoMigrations(scores, stateRef.current);
     } catch (err) {
       console.error('[L3] Scoring failed:', err);
       dispatch({ type: 'SET_SCORING', isScoring: false });
@@ -295,27 +240,128 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_VIEW', view });
   }, []);
 
-  const effectiveScores = state.simulationActive && state.simulationScores
-    ? state.simulationScores
-    : state.scores;
+  /** Approve a pending migration_suggested alert — execute the migration */
+  const approveMigration = useCallback(
+    async (alertId: string, mintName: string, score: number) => {
+      dispatch({ type: 'SET_ALERT_ACTION', id: alertId, action: 'migrated' });
 
+      const currentState = stateRef.current;
+      const plans = computeMigrationPlans(
+        currentState.scores,
+        currentState.balances,
+        currentState.totalBalance,
+      );
+      const plan = plans.find((p) => p.fromName === mintName) ?? plans[0];
+
+      if (plan) {
+        const event = await executeMigration(plan, stateRef.current.demoMode);
+        if (event) dispatch({ type: 'ADD_MIGRATION', event });
+      } else {
+        dispatch({
+          type: 'ADD_MIGRATION',
+          event: {
+            id: crypto.randomUUID(),
+            fromMint: mintName,
+            toMint: 'Best available',
+            amount: 0,
+            reason: `Manual approval: trust score ${score.toFixed(0)} — no eligible target found`,
+            timestamp: new Date().toISOString(),
+            status: 'failed',
+          },
+        });
+      }
+    },
+    [],
+  );
+
+  /** Re-initialise wallet engine, optionally with a BIP-39 seed. */
+  const connectWallet = useCallback(async (bip39seed?: Uint8Array): Promise<WalletConnection> => {
+    const currentState = stateRef.current;
+    const allMints = mintsRef.current;
+    const filteredMints = getMintsForMode(allMints, currentState.demoMode);
+
+    const mintStatuses: Record<string, 'idle' | 'connecting' | 'failed' | 'connected'> = {};
+    filteredMints.forEach((m) => { mintStatuses[m.url] = 'connecting'; });
+
+    const result = await walletEngine.setMode(currentState.demoMode, filteredMints, bip39seed);
+    filteredMints.forEach((m) => {
+      mintStatuses[m.url] = result.ok ? 'connected' : 'failed';
+    });
+
+    refreshBalances();
+
+    return {
+      connected: result.ok,
+      hasSeed: walletEngine.hasSeed(),
+      mintStatuses,
+    };
+  }, [refreshBalances]);
+
+  /** Manually transfer sats between two mints. */
+  const manualTransfer = useCallback(
+    async (fromUrl: string, toUrl: string, amount: number): Promise<MigrationEvent | null> => {
+      const currentState = stateRef.current;
+      const fromScore = currentState.scores.find((s) => s.url === fromUrl);
+      const toScore   = currentState.scores.find((s) => s.url === toUrl);
+
+      const plan = {
+        fromMint: fromUrl,
+        fromName: fromScore?.name ?? fromUrl,
+        toMint:   toUrl,
+        toName:   toScore?.name ?? toUrl,
+        amount,
+        reason: 'Manual transfer',
+      };
+
+      const event = await executeMigration(plan, currentState.demoMode);
+      if (event) {
+        dispatch({ type: 'ADD_MIGRATION', event });
+        refreshBalances();
+      }
+      return event;
+    },
+    [refreshBalances],
+  );
+
+  const effectiveScores =
+    state.simulationActive && state.simulationScores ? state.simulationScores : state.scores;
+
+  // Initialize wallet engine with mode-appropriate mints on mount
   useEffect(() => {
-    // Discover mints from Nostr NIP-87, then init wallet (no auto-scoring)
     discoverMints().then((mints) => {
       console.log(`[L3] Discovered ${mints.length} mints from NIP-87`);
       mintsRef.current = mints;
       dispatch({ type: 'SET_DISCOVERED_MINTS', mints });
 
-      walletEngine.initialize().then(() => {
+      const filteredMints = getMintsForMode(mints, stateRef.current.demoMode);
+      walletEngine.setMode(stateRef.current.demoMode, filteredMints).then(() => {
         refreshBalances();
       });
     });
 
     return () => {};
-  }, [runScoring, refreshBalances]);
+  }, [refreshBalances]);
+
+  // Re-initialize wallet engine when demoMode changes
+  const prevModeRef = useRef(state.demoMode);
+  useEffect(() => {
+    if (state.demoMode === prevModeRef.current) return;
+    prevModeRef.current = state.demoMode;
+
+    const filteredMints = getMintsForMode(mintsRef.current, state.demoMode);
+    walletEngine.setMode(state.demoMode, filteredMints).then(() => {
+      refreshBalances();
+    });
+
+    // Clear stale scores/alerts — they'll repopulate on next scoring cycle
+    dispatch({ type: 'SET_SCORES', scores: [] });
+    dispatch({ type: 'CLEAR_ALERTS' });
+  }, [state.demoMode, refreshBalances]);
 
   return (
-    <StoreContext.Provider value={{ state, dispatch, runScoring, refreshBalances, setView, effectiveScores }}>
+    <StoreContext.Provider
+      value={{ state, dispatch, runScoring, refreshBalances, setView, approveMigration, connectWallet, manualTransfer, effectiveScores }}
+    >
       {children}
     </StoreContext.Provider>
   );

@@ -1,4 +1,5 @@
 import { useStore } from '../../state/store';
+import { relativeTime } from '../../lib/formatters';
 import { ArrowRight, Clock } from 'lucide-react';
 
 const statusConfig: Record<string, { color: string; bg: string; label: string }> = {
@@ -7,16 +8,6 @@ const statusConfig: Record<string, { color: string; bg: string; label: string }>
   completed: { color: '#3fb950', bg: 'bg-[#3fb950]/10', label: 'Completed' },
   failed: { color: '#f85149', bg: 'bg-[#f85149]/10', label: 'Failed' },
 };
-
-function relativeTime(timestamp: string): string {
-  const diff = Date.now() - new Date(timestamp).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
 
 export default function MigrationLog() {
   const { state } = useStore();

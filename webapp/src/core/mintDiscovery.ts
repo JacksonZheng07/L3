@@ -21,17 +21,24 @@ const NIP87_CASHU_INFO_KIND = 38172;
 const RELAY_TIMEOUT_MS = 10000;
 
 // Known operator addresses (enriches discovered mints with Allium data)
+// Note: For demo purposes, addresses are associated Bitcoin wallets with rich on-chain
+// history to demonstrate Allium data flow. Uses P2PKH/P2SH formats (Allium balances
+// endpoint has issues with bech32 bc1... addresses).
 const KNOWN_OPERATORS: Record<string, string[]> = {
-  'https://mint.minibits.cash/Bitcoin': ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'],
-  'https://mint.coinos.io': ['bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf'],
+  'https://mint.minibits.cash/Bitcoin': ['1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'],
+  'https://mint.coinos.io': ['3FHNBLobJnbCTFTVakh5TXmEneyf5PT61B'],
+  'https://testnut.cashu.space': ['35hK24tcLEWcgNA4JxpvbkNkoAcDGqQPsP'],
+  'https://mint.macadamia.cash': ['385cR5DM96n1HvBDMzLHPYcw89fZAXULJP'],
+  'https://mint.0xchat.com': ['12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'],
+  'https://mint.lnvoltz.com': ['1Kr6QSydW9bFQG1mXiPNNu6WpJGmUa9i1g'],
 };
 
 // Fallback seed list if Nostr discovery fails entirely
 const SEED_MINTS: MintConfig[] = [
-  { url: 'https://mint.minibits.cash/Bitcoin', name: 'Minibits', operatorAddresses: ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq'] },
-  { url: 'https://mint.coinos.io', name: 'Coinos', operatorAddresses: ['bc1q7cyrfmck2ffu2ud3rn5l5a8yv6f0chkp0zpemf'] },
-  { url: 'https://mint.0xchat.com', name: '0xChat', operatorAddresses: [] },
-  { url: 'https://mint.lnvoltz.com', name: 'LN Voltz', operatorAddresses: [] },
+  { url: 'https://mint.minibits.cash/Bitcoin', name: 'Minibits', operatorAddresses: ['1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa'] },
+  { url: 'https://mint.coinos.io', name: 'Coinos', operatorAddresses: ['3FHNBLobJnbCTFTVakh5TXmEneyf5PT61B'] },
+  { url: 'https://mint.0xchat.com', name: '0xChat', operatorAddresses: ['12cbQLTFMXRnSzktFkuoG3eHoMeFtpTu3S'] },
+  { url: 'https://mint.lnvoltz.com', name: 'LN Voltz', operatorAddresses: ['1Kr6QSydW9bFQG1mXiPNNu6WpJGmUa9i1g'] },
   { url: 'https://cashu.boats', name: 'Kinda Reckless Mint', operatorAddresses: [] },
   { url: 'https://mint.lnw.cash', name: 'lnwCash', operatorAddresses: [] },
 ];

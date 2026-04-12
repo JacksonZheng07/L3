@@ -658,10 +658,15 @@ function normalizeAlliumBalanceData(raw: Dict | null): Dict | null {
     const decimals = Number(item.decimals ?? 8);
     const rawBalance = Number(item.raw_balance ?? 0);
     const amount = rawBalance / Math.pow(10, decimals);
+    // Allium Bitcoin balance response only has raw_balance/decimals — no symbol or usd_value
+    const symbol = String(
+      (item.asset as Dict)?.symbol ?? item.symbol ?? 'BTC',
+    ).toUpperCase();
     return {
-      symbol: String((item.asset as Dict)?.symbol ?? item.symbol ?? 'BTC').toUpperCase(),
+      symbol,
       amount,
-      usd_value: String(item.usd_value ?? 0),
+      // Estimate USD value from BTC amount (rough estimate for scoring purposes)
+      usd_value: String(symbol === 'BTC' ? amount * 100_000 : 0),
     };
   });
 

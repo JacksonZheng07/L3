@@ -1,12 +1,7 @@
 import { useState } from 'react';
 import type { MintScore } from '../../state/types';
+import { gradeColor, gradeBg } from '../../lib/theme';
 import { ChevronDown, ChevronUp, Wifi, WifiOff, Clock, Tag, Key } from 'lucide-react';
-
-const gradeColor = (grade: 'safe' | 'warning' | 'critical') =>
-  grade === 'safe' ? '#3fb950' : grade === 'warning' ? '#d29922' : '#f85149';
-
-const gradeBg = (grade: 'safe' | 'warning' | 'critical') =>
-  grade === 'safe' ? 'bg-[#3fb950]/10' : grade === 'warning' ? 'bg-[#d29922]/10' : 'bg-[#f85149]/10';
 
 interface MintCardProps {
   score: MintScore;

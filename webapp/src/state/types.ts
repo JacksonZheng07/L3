@@ -82,7 +82,13 @@ export interface SimulationScenario {
   mintOverrides: Record<string, Partial<MintScore>>;
 }
 
-export type AppView = 'dashboard' | 'mints' | 'send' | 'receive';
+export type AppView = 'dashboard' | 'mints' | 'alerts' | 'simulation' | 'migrations' | 'wallet';
+
+export interface WalletConnection {
+  connected: boolean;
+  hasSeed: boolean;
+  mintStatuses: Record<string, 'idle' | 'connecting' | 'connected' | 'failed'>;
+}
 
 // Demo environment mode
 export type DemoMode = 'mock' | 'testnet' | 'mainnet';
