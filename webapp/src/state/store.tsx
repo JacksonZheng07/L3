@@ -1,7 +1,7 @@
 import { createContext, useContext, useReducer, useCallback, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { AppState, AppView, MintConfig, MintScore, MigrationEvent, WalletBalance, ProbeResult, AutomationMode, TrustAlert, DemoMode, EntityWallet, Federation, WalletConnection } from './types';
-import { getMintsForMode } from '../core/config';
+import { getMintsForMode, SCORING_INTERVAL_MS } from '../core/config';
 import { probeMintInfo, probeMintKeysets } from '../core/network';
 import { scoreAllMints } from '../core/trustEngine';
 import { walletApi } from '../core/walletApi';
@@ -323,8 +323,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
     });
 
-    return () => {};
-  }, [refreshBalances]);
+    // Auto-score every 60s so migrations happen without user interaction
+    const interval = setInterval(() => {
+      runScoring();
+    }, SCORING_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [refreshBalances, runScoring]);
 
   // Re-initialize wallet engine when demoMode changes
   const prevModeRef = useRef(state.demoMode);
