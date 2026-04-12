@@ -170,6 +170,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Migration cooldown: don't retry the same migration for 5 minutes
+  const migrationCooldowns = useRef(new Map<string, number>());
+  const MIGRATION_COOLDOWN_MS = 5 * 60_000;
+
   /** Step 3: Execute auto or alert-mode migration logic after scoring */
   async function executeAutoMigrations(
     scores: MintScore[],
@@ -178,13 +182,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const modeAlerts: TrustAlert[] = [];
 
     if (currentState.automationMode === 'auto' && currentState.totalBalance > 0) {
-      const plans = computeMigrationPlans(scores, currentState.balances, currentState.totalBalance);
+      const allPlans = computeMigrationPlans(scores, currentState.balances, currentState.totalBalance);
+
+      // Filter out plans on cooldown
+      const now = Date.now();
+      const plans = allPlans.filter((p) => {
+        const key = `${p.fromMint}→${p.toMint}`;
+        const lastAttempt = migrationCooldowns.current.get(key) ?? 0;
+        return now - lastAttempt > MIGRATION_COOLDOWN_MS;
+      });
 
       const autoAlerts = generateAutoMigrationAlerts(plans, scores);
       autoAlerts.forEach((alert) => dispatch({ type: 'ADD_ALERT', alert }));
       modeAlerts.push(...autoAlerts);
 
       for (const plan of plans) {
+        const key = `${plan.fromMint}→${plan.toMint}`;
+        migrationCooldowns.current.set(key, Date.now());
         const event = await executeMigration(plan);
         if (event) dispatch({ type: 'ADD_MIGRATION', event });
       }

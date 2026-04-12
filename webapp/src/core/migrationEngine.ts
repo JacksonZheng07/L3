@@ -34,6 +34,9 @@ export interface MigrationPlan {
  *   - NEVER move between safe mints — if it's safe, leave it alone.
  *     Every migration costs Lightning fees, so don't churn for marginal gains.
  */
+// Minimum amount worth migrating — below this, fees eat too much
+const MIN_MIGRATION_AMOUNT = 50; // sats
+
 export function computeMigrationPlans(
   scores: MintScore[],
   balances: WalletBalance[],
@@ -64,7 +67,7 @@ export function computeMigrationPlans(
 
   for (const mint of criticalMints) {
     const currentBalance = balanceMap.get(mint.url) ?? 0;
-    if (currentBalance <= 0) continue;
+    if (currentBalance < MIN_MIGRATION_AMOUNT) continue;
 
     const target = safeTargets.find((t) => t.url !== mint.url);
     if (!target) continue;
@@ -97,7 +100,7 @@ export function computeMigrationPlans(
     if (currentPct > WARNING_MAX_PCT && currentBalance > 0) {
       const excessPct = currentPct - WARNING_MAX_PCT;
       const excessAmount = Math.floor((excessPct / 100) * totalBalance);
-      if (excessAmount <= 0) continue;
+      if (excessAmount < MIN_MIGRATION_AMOUNT) continue;
 
       const target = safeTargets.find((t) => t.url !== mint.url);
       if (!target) continue;

@@ -16,7 +16,7 @@
  */
 
 import { Mint, Wallet, MintQuoteState } from '@cashu/cashu-ts';
-import { put, get } from '@vercel/blob';
+import { put, list } from '@vercel/blob';
 
 // ── Mint configs ────────────────────────────────────────────────────
 const TESTNET_MINT_URL = 'https://testnut.cashu.space';
@@ -80,8 +80,12 @@ async function saveProofsToBlob() {
 
 async function loadProofsFromBlob() {
   try {
-    const response = await get(PROOFS_BLOB_KEY, { access: 'public' });
-    if (!response) return null;
+    // List blobs matching our key, then fetch the URL directly
+    const { blobs } = await list({ prefix: PROOFS_BLOB_KEY });
+    if (!blobs || blobs.length === 0) return null;
+    const blobUrl = blobs[0].url;
+    const response = await fetch(blobUrl);
+    if (!response.ok) return null;
     const text = await response.text();
     return JSON.parse(text);
   } catch (err) {
@@ -122,6 +126,16 @@ async function ensureInit(mode, mintConfigs) {
       if (saved && saved.proofs) {
         savedProofs = saved.proofs;
         console.log(`[Wallet] Restored proofs from Blob for ${Object.keys(savedProofs).length} mints`);
+      }
+    }
+
+    // Also initialize wallets for any mints that have saved proofs but aren't in the mode's list
+    const configUrls = new Set(configs.map((c) => c.url));
+    for (const url of Object.keys(savedProofs)) {
+      if (!configUrls.has(url)) {
+        const name = MINTS.find((m) => m.url === url)?.name || url;
+        configs.push({ url, name });
+        console.log(`[Wallet] Adding ${name} — has saved proofs`);
       }
     }
 
@@ -176,14 +190,25 @@ export default async function handler(req, res) {
   const { action } = req.query;
 
   try {
-    // Auto-init on first request
+    // Auto-init on first request — restore saved mode from Blob
     if (!initialized) {
-      await ensureInit('mutinynet');
+      const saved = await loadProofsFromBlob();
+      const savedMode = saved?.mode || 'mutinynet';
+      await ensureInit(savedMode);
     }
 
     switch (action) {
       case 'mode':
         return res.json({ mode: currentMode });
+
+      case 'debug':
+        return res.json({
+          mode: currentMode,
+          initialized,
+          walletUrls: Array.from(wallets.keys()),
+          proofCounts: Object.fromEntries(Array.from(proofs.entries()).map(([url, ps]) => [url, ps.length])),
+          balances: getAllBalances(),
+        });
 
       case 'balances':
         return res.json(getAllBalances());
@@ -268,8 +293,22 @@ export default async function handler(req, res) {
             const mintProofs = proofs.get(url) || [];
             const meltQuote = await wallet.createMeltQuoteBolt11(invoice);
             const needed = meltQuote.amount + meltQuote.fee_reserve;
-            if (bal < needed) continue;
-            const { keep, send: toSend } = wallet.selectProofsToSend(mintProofs, needed, true);
+
+            // Try with full amount+fees first, fall back to sending all available proofs
+            // fee_reserve is an overestimate — actual routing fees are usually much less
+            let keep, toSend;
+            if (bal >= needed) {
+              ({ keep, send: toSend } = wallet.selectProofsToSend(mintProofs, needed, true));
+            } else if (bal >= meltQuote.amount) {
+              // Not enough for worst-case fees, but try with everything we have
+              console.log(`[Wallet] ${mintName(url)}: bal ${bal} < needed ${needed}, trying with all proofs`);
+              keep = [];
+              toSend = mintProofs;
+            } else {
+              console.log(`[Wallet] ${mintName(url)}: bal ${bal} < invoice ${meltQuote.amount}, skipping`);
+              continue;
+            }
+
             const meltResult = await wallet.meltProofsBolt11(meltQuote, toSend);
             proofs.set(url, [...keep, ...meltResult.change]);
             await saveProofsToBlob();
@@ -296,7 +335,17 @@ export default async function handler(req, res) {
           const sourceProofs = proofs.get(from) || [];
           const meltQuote = await sourceWallet.createMeltQuoteBolt11(mintQuote.request);
           const needed = meltQuote.amount + meltQuote.fee_reserve;
-          const { keep, send: toSend } = sourceWallet.selectProofsToSend(sourceProofs, needed, true);
+          const sourceBal = sourceProofs.reduce((s, p) => s + p.amount, 0);
+
+          let keep, toSend;
+          if (sourceBal >= needed) {
+            ({ keep, send: toSend } = sourceWallet.selectProofsToSend(sourceProofs, needed, true));
+          } else {
+            // Try with all proofs — fee_reserve is usually overestimated
+            console.log(`[Wallet] migrate: bal ${sourceBal} < needed ${needed}, trying with all proofs`);
+            keep = [];
+            toSend = sourceProofs;
+          }
           const meltResult = await sourceWallet.meltProofsBolt11(meltQuote, toSend);
           proofs.set(from, [...keep, ...meltResult.change]);
           const newProofs = await targetWallet.mintProofsBolt11(migAmount, mintQuote.quote);
