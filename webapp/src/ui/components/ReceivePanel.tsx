@@ -19,7 +19,7 @@ type ReceiveStep = 'form' | 'invoice' | 'polling' | 'done' | 'failed';
 const QUICK_AMOUNTS = [100, 500, 1_000, 5_000, 10_000];
 
 export default function ReceivePanel() {
-  const { state, effectiveScores, refreshBalances } = useStore();
+  const { effectiveScores, refreshBalances } = useStore();
 
   const [amountStr, setAmountStr] = useState('');
   const [step, setStep]           = useState<ReceiveStep>('form');
