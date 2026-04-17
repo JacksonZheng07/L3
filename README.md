@@ -1,4 +1,4 @@
-# L3 — Liquidity Lightning Load Leveler
+# L3 — Liquidity Load Layer
 
 A real-time trust scoring and automated migration engine for Bitcoin ecash (Cashu) mints. L3 continuously monitors mint health across 11 weighted signals, models each score as a Gaussian distribution, computes MVO-optimal portfolio allocations, and automatically moves funds away from risky mints via the Lightning Network to protect your portfolio.
 
